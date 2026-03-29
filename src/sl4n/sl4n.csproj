@@ -1,0 +1,52 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Build -->
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <IsAotCompatible>true</IsAotCompatible>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
+    <!-- Package identity -->
+    <PackageId>sl4n</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>Syntropy</Authors>
+    <Company>Syntropy</Company>
+    <Product>sl4n</Product>
+    <Description>
+      Structured logging enrichment, declarative field masking and field-agnostic context
+      propagation for .NET — built on top of Microsoft.Extensions.Logging, AsyncLocal&lt;T&gt;
+      and System.Threading.Channels. NativeAOT compatible out-of-the-box.
+    </Description>
+    <PackageTags>logging;masking;pii;context-propagation;observability;structured-logging;opentelemetry;aot</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageProjectUrl>https://github.com/syntropy/sl4n</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/syntropy/sl4n</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+
+    <!-- Symbols -->
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="sl4n.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.ObjectPool" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="8.0.0" />
+  </ItemGroup>
+
+</Project>

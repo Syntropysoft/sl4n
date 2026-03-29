@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Build -->
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <IsAotCompatible>true</IsAotCompatible>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
+    <!-- Package identity -->
+    <PackageId>sl4n.AspNetCore</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>Syntropy</Authors>
+    <Company>Syntropy</Company>
+    <Product>sl4n</Product>
+    <Description>
+      ASP.NET Core middleware for sl4n — extracts inbound context fields from HTTP headers,
+      opens a propagation scope (AsyncLocal) and a MEL log scope in one step.
+      NativeAOT compatible out-of-the-box.
+    </Description>
+    <PackageTags>logging;masking;context-propagation;aspnetcore;middleware;observability;aot</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageProjectUrl>https://github.com/syntropy/sl4n</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/syntropy/sl4n</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+
+    <!-- Symbols -->
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\sl4n\sl4n.csproj" />
+  </ItemGroup>
+
+</Project>

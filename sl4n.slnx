@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/benchmarks/">
+    <Project Path="benchmarks/sl4n.Benchmarks/sl4n.Benchmarks.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/sl4n.AspNetCore/sl4n.AspNetCore.csproj" />
+    <Project Path="src/sl4n/sl4n.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/sl4n.Tests/sl4n.Tests.csproj" />
+  </Folder>
+</Solution>

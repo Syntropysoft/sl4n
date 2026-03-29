@@ -1,0 +1,47 @@
+name: Benchmarks
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'benchmarks/**'
+
+jobs:
+  run:
+    name: Run on Linux
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Run benchmarks
+        run: >
+          dotnet run
+          --project benchmarks/sl4n.Benchmarks/sl4n.Benchmarks.csproj
+          --configuration Release
+          --
+          --filter '*ComparativeBenchmark*'
+          --iterationCount 20
+          --warmupCount 5
+          --exporters github json
+          --artifacts benchmarks/sl4n.Benchmarks/BenchmarkDotNet.Artifacts
+
+      - name: Post results to job summary
+        run: |
+          echo "## Benchmark Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          cat benchmarks/sl4n.Benchmarks/BenchmarkDotNet.Artifacts/results/*ComparativeBenchmark-report-github.md >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: benchmarks/sl4n.Benchmarks/BenchmarkDotNet.Artifacts/results/
+          retention-days: 90

@@ -1,0 +1,33 @@
+# Build output
+bin/
+obj/
+
+# NuGet
+*.nupkg
+*.snupkg
+local-feed/
+
+# BenchmarkDotNet
+BenchmarkDotNet.Artifacts/
+benchmarks/sl4n.Benchmarks/BenchmarkDotNet.Artifacts/
+
+# Logs
+*.log
+
+# OS / tools
+.DS_Store
+Thumbs.db
+*.deb
+
+# IDE
+.vs/
+.idea/
+*.user
+*.suo
+.vscode/
+
+# Test results
+TestResults/
+
+# Internal docs
+docs/
