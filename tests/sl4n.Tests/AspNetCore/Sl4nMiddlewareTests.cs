@@ -127,10 +127,11 @@ public sealed class Sl4nMiddlewareTests : IAsyncDisposable
             new HttpRequestMessage(HttpMethod.Get, "/")
                 .WithHeader("X-Correlation-ID", "req-001"));
 
-        // Give the async transport worker time to drain the channel
-        await Task.Delay(TimeSpan.FromMilliseconds(200));
+        // Wait for the async transport worker to drain (poll instead of fixed delay)
+        using CancellationTokenSource cts = new(TimeSpan.FromSeconds(2));
+        while (!_transport.Entries.Any(e => e.ContainsKey("correlationId")))
+            await Task.Delay(50, cts.Token);
 
-        // The endpoint logs "req-001" echo — transport entries include scope fields
         _transport.Entries
             .Where(e => e.ContainsKey("correlationId"))
             .Should().NotBeEmpty();
