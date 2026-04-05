@@ -51,9 +51,18 @@ public sealed class Sl4nTransportWorker : IHostedService, IAsyncDisposable
     {
         await foreach (RawLogEvent entry in _reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
         {
-            Build(in entry);
-            foreach (ITransport transport in _transports)
-                transport.Log(_dict);
+            try
+            {
+                Build(in entry);
+                foreach (ITransport transport in _transports)
+                    transport.Log(_dict);
+            }
+            catch (ObjectDisposedException)
+            {
+                // ASP.NET Hosting logs carry lazy IEnumerable<KVP> references to HttpContext.
+                // If the worker processes them after the request completes, the context is disposed.
+                // Safe to skip — the entry is a framework diagnostic, not user data.
+            }
             _dict.Clear();
         }
     }
