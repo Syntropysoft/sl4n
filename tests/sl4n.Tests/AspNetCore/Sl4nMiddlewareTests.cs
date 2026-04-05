@@ -1,4 +1,5 @@
 using System.Net;
+using System.Threading.Channels;
 using FluentAssertions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -127,10 +128,10 @@ public sealed class Sl4nMiddlewareTests : IAsyncDisposable
             new HttpRequestMessage(HttpMethod.Get, "/")
                 .WithHeader("X-Correlation-ID", "req-001"));
 
-        // Wait for the async transport worker to drain (poll instead of fixed delay)
-        using CancellationTokenSource cts = new(TimeSpan.FromSeconds(2));
-        while (!_transport.Entries.Any(e => e.ContainsKey("correlationId")))
-            await Task.Delay(50, cts.Token);
+        // Complete the channel writer so the transport worker drains all buffered items,
+        // then stop the host to await the worker's background task.
+        _host!.Services.GetRequiredService<Channel<RawLogEvent>>().Writer.Complete();
+        await _host.StopAsync();
 
         _transport.Entries
             .Where(e => e.ContainsKey("correlationId"))
