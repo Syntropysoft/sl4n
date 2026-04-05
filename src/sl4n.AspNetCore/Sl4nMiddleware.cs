@@ -20,20 +20,39 @@ public sealed class Sl4nMiddleware : IMiddleware
     {
         ContextConfig context = _options.Value.Context;
 
-        // Guard 1 — no inbound config for this source: skip header parsing entirely
-        if (!context.Inbound.ContainsKey(context.Source))
+        // Guard 1 — no inbound config for this source and no auto-generate: nothing to do
+        bool hasInbound = context.Inbound.ContainsKey(context.Source);
+        bool hasAutoGenerate = context.AutoGenerate.Count > 0;
+
+        if (!hasInbound && !hasAutoGenerate)
         {
             await next(httpContext);
             return;
         }
 
-        ImmutableDictionary<string, string> requestHeaders = httpContext.Request.Headers
-            .ToImmutableDictionary(h => h.Key.ToLowerInvariant(), h => h.Value.ToString());
+        // Extract fields from inbound headers
+        Dictionary<string, string> fields;
+        if (hasInbound)
+        {
+            ImmutableDictionary<string, string> requestHeaders = httpContext.Request.Headers
+                .ToImmutableDictionary(h => h.Key.ToLowerInvariant(), h => h.Value.ToString());
 
-        IReadOnlyDictionary<string, string> fields = Sl4nContext.ExtractInbound(
-            requestHeaders, context.Source, context);
+            fields = new Dictionary<string, string>(
+                Sl4nContext.ExtractInbound(requestHeaders, context.Source, context));
+        }
+        else
+        {
+            fields = new();
+        }
 
-        // Guard 2 — no headers matched: skip Push and BeginScope
+        // Auto-generate missing fields declared in AutoGenerate
+        foreach (string field in context.AutoGenerate)
+        {
+            if (!fields.ContainsKey(field))
+                fields[field] = Guid.NewGuid().ToString("D");
+        }
+
+        // Guard 2 — still nothing after extraction + auto-generate: skip
         if (fields.Count == 0)
         {
             await next(httpContext);
@@ -45,6 +64,16 @@ public sealed class Sl4nMiddleware : IMiddleware
 
         // Pipeline de log — MEL scope para enriquecimiento automático de logs
         using IDisposable logScope = _logger.BeginScope(fields)!;
+
+        // Response headers — inject context fields using the configured response target
+        if (!string.IsNullOrEmpty(context.ResponseTarget))
+        {
+            IReadOnlyDictionary<string, string> responseHeaders =
+                Sl4nContext.GetPropagationHeaders(context.ResponseTarget, context);
+
+            foreach (KeyValuePair<string, string> header in responseHeaders)
+                httpContext.Response.Headers[header.Key] = header.Value;
+        }
 
         await next(httpContext);
     }

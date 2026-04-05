@@ -41,7 +41,7 @@ public sealed class Sl4nTransportWorkerTests
     {
         Channel<RawLogEvent> channel = UnboundedChannel();
         CapturingTransport transport = new();
-        Sl4nTransportWorker worker = new(channel.Reader, [transport], NoOpMasking(), DefaultPool());
+        Sl4nTransportWorker worker = new(channel.Reader, [transport], NoOpMasking());
 
         channel.Writer.TryWrite(new RawLogEvent(
             LogLevel.Warning, "MyService", "Something happened", null, null, null));
@@ -63,7 +63,7 @@ public sealed class Sl4nTransportWorkerTests
         Channel<RawLogEvent> channel = UnboundedChannel();
         CapturingTransport transport1 = new();
         CapturingTransport transport2 = new();
-        Sl4nTransportWorker worker = new(channel.Reader, [transport1, transport2], NoOpMasking(), DefaultPool());
+        Sl4nTransportWorker worker = new(channel.Reader, [transport1, transport2], NoOpMasking());
 
         channel.Writer.TryWrite(SimpleEvent("first"));
         channel.Writer.TryWrite(SimpleEvent("second"));
@@ -82,7 +82,7 @@ public sealed class Sl4nTransportWorkerTests
     {
         Channel<RawLogEvent> channel = UnboundedChannel();
         CapturingTransport transport = new();
-        Sl4nTransportWorker worker = new(channel.Reader, [transport], DefaultMasking(), DefaultPool());
+        Sl4nTransportWorker worker = new(channel.Reader, [transport], DefaultMasking());
 
         KeyValuePair<string, object?>[] state =
         [
@@ -107,7 +107,7 @@ public sealed class Sl4nTransportWorkerTests
     {
         Channel<RawLogEvent> channel = UnboundedChannel();
         CapturingTransport transport = new();
-        Sl4nTransportWorker worker = new(channel.Reader, [transport], DefaultMasking(), DefaultPool());
+        Sl4nTransportWorker worker = new(channel.Reader, [transport], DefaultMasking());
 
         List<KeyValuePair<string, object?>> scope =
         [
@@ -129,7 +129,7 @@ public sealed class Sl4nTransportWorkerTests
     {
         Channel<RawLogEvent> channel = UnboundedChannel();
         CapturingTransport transport = new();
-        Sl4nTransportWorker worker = new(channel.Reader, [transport], NoOpMasking(), DefaultPool());
+        Sl4nTransportWorker worker = new(channel.Reader, [transport], NoOpMasking());
 
         Exception ex = new InvalidOperationException("boom");
         channel.Writer.TryWrite(new RawLogEvent(
@@ -148,7 +148,7 @@ public sealed class Sl4nTransportWorkerTests
     {
         Channel<RawLogEvent> channel = UnboundedChannel();
         CapturingTransport transport = new();
-        Sl4nTransportWorker worker = new(channel.Reader, [transport], NoOpMasking(), DefaultPool());
+        Sl4nTransportWorker worker = new(channel.Reader, [transport], NoOpMasking());
 
         channel.Writer.Complete();
 
@@ -165,7 +165,7 @@ public sealed class Sl4nTransportWorkerTests
     public async Task Worker_StopAsync_DoesNotThrow()
     {
         Channel<RawLogEvent> channel = UnboundedChannel();
-        Sl4nTransportWorker worker = new(channel.Reader, [new CapturingTransport()], NoOpMasking(), DefaultPool());
+        Sl4nTransportWorker worker = new(channel.Reader, [new CapturingTransport()], NoOpMasking());
 
         await worker.StartAsync(CancellationToken.None);
 
@@ -177,7 +177,7 @@ public sealed class Sl4nTransportWorkerTests
     public async Task Worker_DisposeAsync_DoesNotThrow()
     {
         Channel<RawLogEvent> channel = UnboundedChannel();
-        Sl4nTransportWorker worker = new(channel.Reader, [new CapturingTransport()], NoOpMasking(), DefaultPool());
+        Sl4nTransportWorker worker = new(channel.Reader, [new CapturingTransport()], NoOpMasking());
 
         await worker.StartAsync(CancellationToken.None);
 

@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <!-- Build -->
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
@@ -11,7 +11,7 @@
 
     <!-- Package identity -->
     <PackageId>sl4n.AspNetCore</PackageId>
-    <Version>1.0.0</Version>
+    <Version>1.0.0-beta.1</Version>
     <Authors>Syntropy</Authors>
     <Company>Syntropy</Company>
     <Product>sl4n</Product>
