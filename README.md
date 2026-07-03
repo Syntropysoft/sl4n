@@ -59,8 +59,9 @@ The `correlationId` propagated automatically from the inbound HTTP header. The `
 
 | Package | Description |
 |---------|-------------|
-| `sl4n` | Core — masking, context propagation, async transport |
+| `sl4n` | Core — masking, context propagation, async transport, logging matrix, retention |
 | `sl4n.AspNetCore` | Middleware — extracts inbound context, opens MEL scope per request |
+| `sl4n.Testing` | `SpyTransport` — capture emitted entries and assert on them in tests |
 
 ---
 
@@ -374,6 +375,25 @@ It is the component that makes every log line correct, consistent, and safe befo
 **No network I/O at runtime.** sl4n does not contact any external URLs. The only output is what your transports produce.
 
 **No extra runtime dependencies.** The core package depends only on `Microsoft.Extensions.*` — already present in any ASP.NET Core application.
+
+---
+
+## Testing your code
+
+`sl4n.Testing` ships a `SpyTransport` that captures emitted entries — so you assert on exactly what
+would have shipped: levels, messages, context fields, and **masked** values.
+
+```csharp
+var spy = new SpyTransport();
+var services = new ServiceCollection();
+services.AddSl4n(cfg => cfg.Masking.EnableDefaultRules = true);
+services.UseSpyTransport(spy);           // capture entries instead of writing to the console
+
+// … exercise the code under test, then assert on what was emitted:
+spy.Entries[0]["Email"].Should().Be("j**n@example.com");   // masking really ran
+spy.AtLevel("error").Should().BeEmpty();
+spy.AnyMessageContains("information", "Order created").Should().BeTrue();
+```
 
 ---
 

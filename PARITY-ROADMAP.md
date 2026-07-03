@@ -51,11 +51,18 @@ Baseline before this work: 81 tests green, `dotnet 10.0.300`, target `net8.0`, A
       `__retention` field is consumed, never emitted. Config `Sl4nConfig.RetentionPolicies` + DI +
       README section — 127 tests green, AOT-clean.
 - [ ] **Phase 5 — Distributed** (Kafka/Redis instrumentation helpers — adapter package)
-- [ ] **Phase 6 — Testing package (`SpyTransport`) + docs parity**
+- [~] **Phase 6 — Testing package + docs parity** — DONE: `sl4n.Testing` project with `SpyTransport`
+      (capture + `AtLevel`/`WithField`/`AnyMessageContains`) + `UseSpyTransport` DI helper; added to
+      solution + test project; README "Testing your code" section — 132 tests, full solution builds.
+      REMAINING: dedicated `docs/` pages mirroring SyntropyLog (optional).
 
-Minor cleanups found (fold into any phase):
-- License mismatch — `sl4n.csproj` says `MIT`, README/badge say **Apache 2.0**. Pick one.
-- `sl4n.csproj` repo URL `github.com/syntropy/sl4n` → likely `Syntropysoft/sl4n`.
+Remaining phase work:
+- **Durable transport** (Phase 4 leftover) — needs a backing-store decision (in-memory retry/backoff
+  vs disk persistence across restarts).
+
+Minor cleanups:
+- [x] License — set to **Apache-2.0** (Gabriel's call) across `sl4n.csproj` + `sl4n.Testing.csproj`.
+- [x] Repo URL fixed to `github.com/Syntropysoft/sl4n`.
 
 ---
 

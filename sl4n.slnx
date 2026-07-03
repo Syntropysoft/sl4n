@@ -4,6 +4,7 @@
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/sl4n.AspNetCore/sl4n.AspNetCore.csproj" />
+    <Project Path="src/sl4n.Testing/sl4n.Testing.csproj" />
     <Project Path="src/sl4n/sl4n.csproj" />
   </Folder>
   <Folder Name="/tests/">
