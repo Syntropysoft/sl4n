@@ -40,8 +40,16 @@ Baseline before this work: 81 tests green, `dotnet 10.0.300`, target `net8.0`, A
 - [~] **Phase 4 — Transports** — DONE: log-time ISO-8601 `timestamp`, `ClassicConsoleTransport`
       (human-readable) + `UseClassicConsole()` swap helper — 117 tests green, AOT-clean.
       REMAINING (need design input, see below): durable transport, retention policies.
-      DECISION PENDING: nested/deep masking walk — coupled to serialization + sanitization; may be a
-      documented .NET salvedad (MEL state is flat; AOT can't reflect POCOs) rather than a build.
+      DECIDED (Gabriel): nested/deep masking = **documented salvedad, not built**. Respect the JS
+      spirit — mask by FIELD NAME, never free text — but do NOT deep-walk nested object graphs (would
+      "move a mountain of data" and penalize latency). Non-string under a sensitive key already
+      redacts whole. Documented in README masking "Scope" note.
+
+- [x] **Phase 5 — Retention policies** ✅ `RetentionPolicy` + `RetentionRegistry` +
+      `Sl4nRetention.BeginRetentionScope` (MEL scope carrying `__retention`); worker resolves the
+      policy and stamps `retention`/`retentionClass`/`retentionDays`, bypassing the matrix; the raw
+      `__retention` field is consumed, never emitted. Config `Sl4nConfig.RetentionPolicies` + DI +
+      README section — 127 tests green, AOT-clean.
 - [ ] **Phase 5 — Distributed** (Kafka/Redis instrumentation helpers — adapter package)
 - [ ] **Phase 6 — Testing package (`SpyTransport`) + docs parity**
 

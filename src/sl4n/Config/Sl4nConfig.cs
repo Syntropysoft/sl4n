@@ -22,4 +22,11 @@ public sealed class Sl4nConfig
     /// second argument is the transport's type name. Not bindable from configuration.
     /// </summary>
     public Action<Exception, string>? OnLogFailure { get; set; }
+
+    /// <summary>
+    /// Named retention policies (compliance metadata). Tag a log with one via
+    /// <see cref="Sl4nRetention.BeginRetentionScope"/>; the emitted entry then carries
+    /// <c>retention</c> / <c>retentionClass</c> / <c>retentionDays</c>. Bindable from configuration.
+    /// </summary>
+    public Dictionary<string, RetentionPolicy> RetentionPolicies { get; set; } = new();
 }

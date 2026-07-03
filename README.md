@@ -173,6 +173,12 @@ Guarantees:
 - **ReDoS guard.** Custom-rule regexes run under `regexTimeoutMs` (default 100 ms). The built-in
   defaults are linear, source-generated `[GeneratedRegex]` — not subject to the timeout.
 
+**Scope — by field name, never free text.** A value is masked because its *key* matches a rule, not
+because the string *looks* sensitive. Masking does **not** deep-walk nested object graphs — that
+would move a mountain of data on every log and penalize latency. Structure sensitive data as keyed
+fields; a nested object under a sensitive key is still redacted whole. This mirrors SyntropyLog's
+by-key spirit, kept allocation-light and AOT-safe for .NET.
+
 ---
 
 ## Logging matrix
@@ -284,6 +290,33 @@ services.AddSl4n(cfg =>
     cfg.Masking.OnMaskingError = (ex, field)     => Console.Error.WriteLine($"mask {field}: {ex.Message}");
 });
 ```
+
+---
+
+## Retention policies
+
+Declare named retention policies (compliance metadata), then tag the logs that must obey them — the
+.NET analog of SyntropyLog's `withRetention('SOX_AUDIT_TRAIL')`. The emitted entry carries
+`retention` / `retentionClass` / `retentionDays` so a downstream store can apply the right retention.
+
+```json
+// appsettings.json — inside "sl4n"
+"retentionPolicies": {
+  "SOX_AUDIT_TRAIL": { "days": 2555, "class": "SOX" },
+  "GDPR_STANDARD":   { "days": 365,  "class": "GDPR" }
+}
+```
+
+```csharp
+using (logger.BeginRetentionScope("SOX_AUDIT_TRAIL"))
+{
+    logger.LogInformation("Payment approved {Amount}", amount);
+    // → { …, "retention": "SOX_AUDIT_TRAIL", "retentionClass": "SOX", "retentionDays": 2555 }
+}
+```
+
+The tag rides a MEL scope, so every log in the call chain inherits it. Retention metadata **bypasses
+the logging matrix** — it's a structural compliance stamp, not user context.
 
 ---
 

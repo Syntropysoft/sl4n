@@ -10,6 +10,7 @@ public sealed class Sl4nTransportWorker : IHostedService, IAsyncDisposable
     private readonly IReadOnlyList<ITransport>   _transports;
     private readonly MaskingEngine               _masking;
     private readonly LoggingMatrix               _matrix;
+    private readonly RetentionRegistry           _retention;
     private readonly Sl4nStats                    _stats;
     private readonly Action<Exception, string>?  _onLogFailure;
     private readonly CancellationTokenSource     _cts         = new();
@@ -25,12 +26,14 @@ public sealed class Sl4nTransportWorker : IHostedService, IAsyncDisposable
         MaskingEngine               masking,
         LoggingMatrix?              matrix       = null,
         Sl4nStats?                  stats        = null,
-        Action<Exception, string>?  onLogFailure = null)
+        Action<Exception, string>?  onLogFailure = null,
+        RetentionRegistry?          retention    = null)
     {
         _reader       = reader;
         _transports   = transports.ToList();
         _masking      = masking;
         _matrix       = matrix ?? LoggingMatrix.Empty;
+        _retention    = retention ?? RetentionRegistry.Empty;
         _stats        = stats ?? new Sl4nStats();
         _onLogFailure = onLogFailure;
     }
@@ -106,12 +109,31 @@ public sealed class Sl4nTransportWorker : IHostedService, IAsyncDisposable
         // Scope (context) fields are unmasked — they come from the propagation context, not from
         // user log calls — but they ARE filtered by the Logging Matrix for this level.
         // allowed == null means "allow all" (no matrix, or level maps to "*").
+        string? retentionName = null;
         if (e.ScopeFields is not null)
         {
             HashSet<string>? allowed = _matrix.AllowedFields(level);
             foreach (KeyValuePair<string, object?> kv in e.ScopeFields)
+            {
+                if (kv.Key == Sl4nRetention.Field)          // structural tag — consumed, never emitted raw
+                {
+                    retentionName = kv.Value?.ToString();
+                    continue;
+                }
                 if (allowed is null || allowed.Contains(kv.Key))
                     _dict[kv.Key] = Sanitize(kv.Value);
+            }
+        }
+
+        // Retention metadata bypasses the matrix — it is a compliance tag, not user context.
+        if (retentionName is not null)
+        {
+            _dict["retention"] = retentionName;
+            if (_retention.TryResolve(retentionName, out RetentionPolicy? policy))
+            {
+                _dict["retentionClass"] = policy.Class;
+                _dict["retentionDays"]  = policy.Days;
+            }
         }
 
         if (e.StructuredState is not null)

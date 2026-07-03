@@ -51,6 +51,10 @@ public static class Sl4nServiceCollectionExtensions
         services.TryAddSingleton<LoggingMatrix>(sp =>
             LoggingMatrix.Create(sp.GetRequiredService<IOptions<Sl4nConfig>>().Value.LoggingMatrix));
 
+        // Retention registry — resolves policy names to compliance metadata
+        services.TryAddSingleton<RetentionRegistry>(sp =>
+            RetentionRegistry.Create(sp.GetRequiredService<IOptions<Sl4nConfig>>().Value.RetentionPolicies));
+
         // Async transport channel
         services.TryAddSingleton(_ => Sl4nChannel.Create());
 
@@ -64,7 +68,8 @@ public static class Sl4nServiceCollectionExtensions
                 sp.GetRequiredService<MaskingEngine>(),
                 sp.GetRequiredService<LoggingMatrix>(),
                 sp.GetRequiredService<Sl4nStats>(),
-                cfg.OnLogFailure);
+                cfg.OnLogFailure,
+                sp.GetRequiredService<RetentionRegistry>());
         });
 
         services.AddHostedService(sp => sp.GetRequiredService<Sl4nTransportWorker>());
