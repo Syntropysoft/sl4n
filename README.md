@@ -129,6 +129,25 @@ Both implement `ITransport` — write your own for any backend (the Universal Ad
 
 ---
 
+## Durable buffering
+
+Wrap any transport in a `DurableFileTransport` to survive backend outages. It's a **buffer, not an
+archive**: in the happy path entries go straight to the inner transport and disk is untouched. When
+the inner transport throws, entries spool to a file and retry on later logs and on restart; once the
+backlog drains, the file is **deleted**. The spool only ever holds the undelivered backlog — no
+rotation, no rename, no cleanup to maintain.
+
+```csharp
+ITransport sink = new MyHttpTransport(/* … */);         // your real sink; may fail transiently
+var durable = new DurableFileTransport(sink, "buffer/spool.jsonl");
+services.UseTransport(durable);                          // register as your ITransport
+```
+
+A crash mid-outage is recovered on the next startup: the leftover spool is replayed to the inner
+transport when a fresh `DurableFileTransport` is constructed.
+
+---
+
 ## Default masking rules
 
 | Field pattern | Strategy | Example |

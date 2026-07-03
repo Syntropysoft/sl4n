@@ -37,9 +37,11 @@ Baseline before this work: 81 tests green, `dotnet 10.0.300`, target `net8.0`, A
 - [x] **Phase 3 — Safety boundary** ✅ (sanitization of control chars/ANSI in the worker, per-transport
       failure isolation + `OnLogFailure`, `Sl4nStats`/`Snapshot` = `getStats()`, masking-failure counter
       wired through DI) — 110 tests green, AOT-clean.
-- [~] **Phase 4 — Transports** — DONE: log-time ISO-8601 `timestamp`, `ClassicConsoleTransport`
-      (human-readable) + `UseClassicConsole()` swap helper — 117 tests green, AOT-clean.
-      REMAINING (need design input, see below): durable transport, retention policies.
+- [x] **Phase 4 — Transports** ✅ log-time ISO-8601 `timestamp`, `ClassicConsoleTransport` +
+      `UseClassicConsole()`, and `DurableFileTransport` — a self-emptying disk **buffer** (not an
+      archive): happy path never touches disk, spools only the undelivered backlog during an outage,
+      deletes the file on drain, recovers leftover spool on restart. No rotation/rename/cleanup
+      (Gabriel's constraint). `UseTransport`/`AddTransport` helpers. 137 tests green, AOT-clean.
       DECIDED (Gabriel): nested/deep masking = **documented salvedad, not built**. Respect the JS
       spirit — mask by FIELD NAME, never free text — but do NOT deep-walk nested object graphs (would
       "move a mountain of data" and penalize latency). Non-string under a sensitive key already
@@ -56,9 +58,8 @@ Baseline before this work: 81 tests green, `dotnet 10.0.300`, target `net8.0`, A
       solution + test project; README "Testing your code" section — 132 tests, full solution builds.
       REMAINING: dedicated `docs/` pages mirroring SyntropyLog (optional).
 
-Remaining phase work:
-- **Durable transport** (Phase 4 leftover) — needs a backing-store decision (in-memory retry/backoff
-  vs disk persistence across restarts).
+All six phases delivered. Optional follow-ups: dedicated `docs/` pages mirroring SyntropyLog;
+a `MaxBufferedEntries` cap on `DurableFileTransport` for very long outages (currently unbounded).
 
 Minor cleanups:
 - [x] License — set to **Apache-2.0** (Gabriel's call) across `sl4n.csproj` + `sl4n.Testing.csproj`.
