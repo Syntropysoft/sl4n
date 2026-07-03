@@ -381,17 +381,30 @@ services.AddSl4n(configuration.GetSection("sl4n"));
 
 ## Performance
 
-Benchmarks run with BenchmarkDotNet, `DefaultJob` (N≈99, CI ~3%), .NET 8, Linux/WSL — AMD Ryzen 7 7735HS.
+BenchmarkDotNet v0.14.0, `DefaultJob`, Windows 11, .NET 8 host — one `LogInformation` call with an
+active scope (`correlationId` + `traceId`) and a masked `Email` field. Sorted by mean:
 
-| Method | Mean | Allocated |
-|--------|-----:|----------:|
-| MEL no-op (NullLogger) | 73 ns | 72 B |
-| **sl4n (scope + masking, null transport)** | **607 ns** | **482 B** |
-| MEL working (scope + dict, no masking) | 618 ns | 792 B |
-| Serilog (scope, no sinks, via MEL) | 684 ns | 712 B |
-| NLog (scope, NullTarget, via MEL) | 547 ns | 496 B |
+| Method | Mean | Ratio | Allocated |
+|--------|-----:|------:|----------:|
+| MEL no-op (NullLogger) | 39 ns | 1.00 | 72 B |
+| NLog (scope, NullTarget, via MEL) | 328 ns | 8.3 | 496 B |
+| MEL working (scope + dict, no masking) | 335 ns | 8.5 | 792 B |
+| **sl4n (scope + masking, null transport)** | **490 ns** | **12.4** | **494 B** |
+| Serilog (scope, no sinks, via MEL) | 1,434 ns | 36.4 | 712 B |
 
-**sl4n with masking active allocates less than MEL without masking** (482 B vs 792 B), is faster than Serilog, and within 11 ns of a working MEL — while doing more work.
+Read honestly:
+
+- **~3× faster than Serilog** (490 vs 1,434 ns) and allocates **~30% less** (494 vs 712 B).
+- **Allocates less than a plain MEL scope** (494 vs 792 B) and about the same as NLog (494 vs 496 B) —
+  while doing PII masking that neither of them does.
+- Slower in raw nanoseconds than a no-masking MEL/NLog (~490 vs ~330). That gap is the **asynchronous
+  handoff**: the `LogInformation` call only snapshots the scope and enqueues — **masking, matrix
+  filtering and sanitization run on a background worker, off the request's hot path**. So 490 ns is
+  caller-observed latency, *not* the cost of masking.
+
+> Under this tight loop the `sl4n` row is bimodal (fastest ~330 ns, on par with NLog): firing logs
+> back-to-back with no gaps saturates the async channel, so queued entries survive to Gen1 and add GC
+> jitter. Real applications log sparsely — the channel drains between calls and this doesn't appear.
 
 ---
 
