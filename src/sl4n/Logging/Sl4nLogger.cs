@@ -57,6 +57,7 @@ internal sealed class Sl4nLogger : ILogger
             formatter(state, exception),
             state as IEnumerable<KeyValuePair<string, object?>>,
             exception,
-            scopeList.Count > 0 ? scopeList : null));
+            scopeList.Count > 0 ? scopeList : null,
+            DateTimeOffset.UtcNow));
     }
 }

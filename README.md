@@ -111,6 +111,23 @@ HTTP request ──► Sl4nMiddleware
 
 ---
 
+## Console output
+
+Every entry carries an ISO-8601 `timestamp` captured at log time. Two console transports ship:
+
+- **`ConsoleTransport`** (default) — one JSON object per line, for machine ingestion.
+- **`ClassicConsoleTransport`** — human-readable `2026-06-20T… [INF] category: message key=value` for
+  local development. Swap it in after `AddSl4n`:
+
+```csharp
+builder.Services.AddSl4n(builder.Configuration.GetSection("sl4n"));
+builder.Services.UseClassicConsole();   // replaces the JSON console transport
+```
+
+Both implement `ITransport` — write your own for any backend (the Universal Adapter role).
+
+---
+
 ## Default masking rules
 
 | Field pattern | Strategy | Example |

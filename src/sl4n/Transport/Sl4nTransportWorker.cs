@@ -98,6 +98,7 @@ public sealed class Sl4nTransportWorker : IHostedService, IAsyncDisposable
     private void Build(in RawLogEvent e)
     {
         string level = LevelName(e.Level);
+        if (e.Timestamp != default) _dict["timestamp"] = e.Timestamp.ToString("O");
         _dict["level"]    = level;
         _dict["category"] = e.Category;
         _dict["message"]  = Sanitizer.Clean(e.Message);
