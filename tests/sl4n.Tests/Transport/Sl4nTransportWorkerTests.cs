@@ -184,4 +184,99 @@ public sealed class Sl4nTransportWorkerTests
         Func<Task> dispose = async () => await worker.DisposeAsync();
         await dispose.Should().NotThrowAsync();
     }
+
+    // ── Logging matrix (context-field filtering) ──────────────────────────────
+
+    private static async Task<Dictionary<string, object?>> RunSingle(
+        RawLogEvent evt, LoggingMatrix matrix)
+    {
+        Channel<RawLogEvent> channel = UnboundedChannel();
+        CapturingTransport transport = new();
+        Sl4nTransportWorker worker = new(channel.Reader, [transport], NoOpMasking(), matrix);
+
+        channel.Writer.TryWrite(evt);
+        channel.Writer.Complete();
+
+        await worker.StartAsync(CancellationToken.None);
+        await channel.Reader.Completion;
+        await worker.StopAsync(CancellationToken.None);
+
+        return transport.Entries.Single();
+    }
+
+    private static List<KeyValuePair<string, object?>> Scope(params (string, object?)[] fields) =>
+        fields.Select(f => KeyValuePair.Create(f.Item1, f.Item2)).ToList();
+
+    [Fact]
+    public async Task Worker_Matrix_FiltersScopeFields_ByLevel()
+    {
+        LoggingMatrix matrix = LoggingMatrix.Create(new Dictionary<string, string[]>
+        {
+            ["information"] = ["correlationId"],
+        });
+        RawLogEvent evt = new(LogLevel.Information, "test", "ok", null, null,
+            Scope(("correlationId", "req-001"), ("userId", "usr-42")));
+
+        Dictionary<string, object?> entry = await RunSingle(evt, matrix);
+
+        entry["correlationId"].Should().Be("req-001");
+        entry.Should().NotContainKey("userId"); // not whitelisted at information
+    }
+
+    [Fact]
+    public async Task Worker_Matrix_Wildcard_KeepsAllScopeFields()
+    {
+        LoggingMatrix matrix = LoggingMatrix.Create(new Dictionary<string, string[]>
+        {
+            ["default"] = ["correlationId"],
+            ["error"]   = ["*"],
+        });
+        RawLogEvent evt = new(LogLevel.Error, "test", "boom", null, null,
+            Scope(("correlationId", "req-001"), ("userId", "usr-42")));
+
+        Dictionary<string, object?> entry = await RunSingle(evt, matrix);
+
+        entry["correlationId"].Should().Be("req-001");
+        entry["userId"].Should().Be("usr-42");
+    }
+
+    [Fact]
+    public async Task Worker_Matrix_Default_AppliesToUnlistedLevel()
+    {
+        LoggingMatrix matrix = LoggingMatrix.Create(new Dictionary<string, string[]>
+        {
+            ["default"] = ["correlationId"],
+            ["error"]   = ["*"],
+        });
+        RawLogEvent evt = new(LogLevel.Warning, "test", "hmm", null, null,
+            Scope(("correlationId", "req-001"), ("userId", "usr-42")));
+
+        Dictionary<string, object?> entry = await RunSingle(evt, matrix);
+
+        entry["correlationId"].Should().Be("req-001");
+        entry.Should().NotContainKey("userId"); // warning falls back to default
+    }
+
+    [Fact]
+    public async Task Worker_Matrix_DoesNotFilter_StructuredState()
+    {
+        // information only whitelists correlationId — but per-call structured state is never filtered.
+        LoggingMatrix matrix = LoggingMatrix.Create(new Dictionary<string, string[]>
+        {
+            ["information"] = ["correlationId"],
+        });
+        KeyValuePair<string, object?>[] state =
+        [
+            KeyValuePair.Create<string, object?>("amount", 299.90m),
+            KeyValuePair.Create<string, object?>("{OriginalFormat}", "Charged {amount}"),
+        ];
+        RawLogEvent evt = new(LogLevel.Information, "test", "Charged 299.90", state, null,
+            Scope(("correlationId", "req-001"), ("userId", "usr-42")));
+
+        Dictionary<string, object?> entry = await RunSingle(evt, matrix);
+
+        entry["correlationId"].Should().Be("req-001"); // context: whitelisted
+        entry.Should().NotContainKey("userId");        // context: filtered
+        entry["amount"].Should().Be(299.90m);          // per-call state: always emitted
+    }
 }

@@ -124,6 +124,45 @@ HTTP request ──► Sl4nMiddleware
 
 ---
 
+## Logging matrix
+
+*"You declare what each log should carry"* — this is where. The **logging matrix** is a per-level
+whitelist of **context fields**: a field not whitelisted for a level never reaches a transport. The
+same request context emits different subsets at different levels — narrow at `information`, wide at
+`error` — reviewable as one config object instead of by grepping every log call.
+
+```json
+// appsettings.json — inside the "sl4n" section
+"loggingMatrix": {
+  "default":     ["correlationId"],
+  "information": ["correlationId", "userId", "operation"],
+  "error":       ["*"]
+}
+```
+
+```csharp
+// AOT path — the typed builder keys off LogLevel, so a "not-a-level" typo is a compile error
+cfg.LoggingMatrix = new MatrixBuilder()
+    .Default("correlationId")
+    .Level(LogLevel.Information, "correlationId", "userId", "operation")
+    .All(LogLevel.Error)
+    .Build();
+```
+
+| Key | Meaning |
+|-----|---------|
+| `default` | Applied to any level not listed explicitly |
+| `Trace` … `Critical` | Per-level whitelist — MEL level names, case-insensitive |
+| `["*"]` | Allow every context field at that level |
+
+**It filters context only.** The per-call fields you pass to
+`logger.LogInformation("Charged {Amount}", amount)` are always emitted (and masked) — the matrix
+governs only the auto-propagating scope you can't trim at each call site. Leave a field off a level's
+list to keep it out of that level; always define `default`. When no matrix is configured, every
+context field passes through (backward compatible).
+
+---
+
 ## Propagation headers
 
 `correlationId`, `traceId` are **conceptual names internal to the framework** — not the names that travel on the wire. The wire name per destination is declared by you in configuration.

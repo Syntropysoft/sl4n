@@ -9,6 +9,7 @@ public sealed class Sl4nTransportWorker : IHostedService, IAsyncDisposable
     private readonly ChannelReader<RawLogEvent>  _reader;
     private readonly IReadOnlyList<ITransport>   _transports;
     private readonly MaskingEngine               _masking;
+    private readonly LoggingMatrix               _matrix;
     private readonly CancellationTokenSource     _cts         = new();
     private Task                                 _executeTask = Task.CompletedTask;
 
@@ -19,11 +20,13 @@ public sealed class Sl4nTransportWorker : IHostedService, IAsyncDisposable
     internal Sl4nTransportWorker(
         ChannelReader<RawLogEvent> reader,
         IEnumerable<ITransport>    transports,
-        MaskingEngine              masking)
+        MaskingEngine              masking,
+        LoggingMatrix?             matrix = null)
     {
         _reader     = reader;
         _transports = transports.ToList();
         _masking    = masking;
+        _matrix     = matrix ?? LoggingMatrix.Empty;
     }
 
     public Task StartAsync(CancellationToken cancellationToken)
@@ -69,14 +72,21 @@ public sealed class Sl4nTransportWorker : IHostedService, IAsyncDisposable
 
     private void Build(in RawLogEvent e)
     {
-        _dict["level"]    = LevelName(e.Level);
+        string level = LevelName(e.Level);
+        _dict["level"]    = level;
         _dict["category"] = e.Category;
         _dict["message"]  = e.Message;
 
-        // Scope fields are unmasked — they come from the propagation context, not from user log calls.
+        // Scope (context) fields are unmasked — they come from the propagation context, not from
+        // user log calls — but they ARE filtered by the Logging Matrix for this level.
+        // allowed == null means "allow all" (no matrix, or level maps to "*").
         if (e.ScopeFields is not null)
+        {
+            HashSet<string>? allowed = _matrix.AllowedFields(level);
             foreach (KeyValuePair<string, object?> kv in e.ScopeFields)
-                _dict[kv.Key] = kv.Value;
+                if (allowed is null || allowed.Contains(kv.Key))
+                    _dict[kv.Key] = kv.Value;
+        }
 
         if (e.StructuredState is not null)
             foreach (KeyValuePair<string, object?> kv in _masking.Apply(e.StructuredState))

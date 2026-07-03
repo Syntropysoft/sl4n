@@ -38,15 +38,20 @@ public static class Sl4nServiceCollectionExtensions
             return MaskingEngine.Create(config);
         });
 
+        // Logging matrix — per-level context field whitelist
+        services.TryAddSingleton<LoggingMatrix>(sp =>
+            LoggingMatrix.Create(sp.GetRequiredService<IOptions<Sl4nConfig>>().Value.LoggingMatrix));
+
         // Async transport channel
         services.TryAddSingleton(_ => Sl4nChannel.Create());
 
-        // Transport worker — owns masking + dict building
+        // Transport worker — owns masking, matrix filtering + dict building
         services.TryAddSingleton<Sl4nTransportWorker>(sp =>
             new Sl4nTransportWorker(
                 sp.GetRequiredService<Channel<RawLogEvent>>().Reader,
                 sp.GetServices<ITransport>(),
-                sp.GetRequiredService<MaskingEngine>()));
+                sp.GetRequiredService<MaskingEngine>(),
+                sp.GetRequiredService<LoggingMatrix>()));
 
         services.AddHostedService(sp => sp.GetRequiredService<Sl4nTransportWorker>());
 
