@@ -1,24 +1,20 @@
-<p align="center">
-  <img src="https://syntropysoft.com/syntropylog-logo.png" alt="SyntropyLog Logo" width="170"/>
-</p>
+![SyntropyLog](https://syntropysoft.com/syntropylog-logo.png)
 
-<h1 align="center">sl4n</h1>
-<h2  align="center">Syntropy Log for .NET</h2>
+# sl4n — Syntropy Log for .NET
 
-<p align="center">
-  <strong>The declarative observability framework for .NET — built on Microsoft.Extensions.Logging.</strong>
-  <br />
-  Correlation IDs, PII masking, per-level field control and retention — declared <strong>once</strong> and
-  enforced on every log, before it reaches any transport. <strong>Fail-safe by design</strong> (logging can
-  never crash your app) and <strong>NativeAOT-compatible</strong>.
-</p>
+**The declarative observability framework for .NET — built on Microsoft.Extensions.Logging.**
+Correlation IDs, PII masking, per-level field control and retention — declared **once** and enforced on
+every log, before it reaches any transport. Fail-safe by design (logging can never crash your app) and
+NativeAOT-compatible.
 
-<p align="center">
-  <a href="#"><img src="https://img.shields.io/badge/status-alpha-orange.svg" alt="Alpha"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License"></a>
-  <a href="#"><img src="https://img.shields.io/badge/.NET-8%2B-blue.svg" alt=".NET 8+"></a>
-  <a href="#"><img src="https://img.shields.io/badge/NativeAOT-compatible-brightgreen.svg" alt="NativeAOT compatible"></a>
-</p>
+![status: alpha](https://img.shields.io/badge/status-alpha-orange.svg) ![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg) ![.NET 8+](https://img.shields.io/badge/.NET-8%2B-blue.svg) ![NativeAOT compatible](https://img.shields.io/badge/NativeAOT-compatible-brightgreen.svg)
+
+> **sl4n is the .NET counterpart of [SyntropyLog](https://github.com/Syntropysoft/SyntropyLog)** — the
+> Node.js / TypeScript observability framework (also on [npm as `syntropylog`](https://www.npmjs.com/package/syntropylog)).
+> Same concepts and declarative model, adapted idiomatically to .NET: it rides on
+> `Microsoft.Extensions.Logging` (you keep `ILogger<T>`) instead of a bespoke logger, is configured
+> through DI (`AddSl4n`) instead of a global `init()`, and needs **no native addon** — .NET already
+> compiles to native, so the whole pipeline is NativeAOT-safe.
 
 ---
 
