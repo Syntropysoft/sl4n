@@ -279,4 +279,84 @@ public sealed class Sl4nTransportWorkerTests
         entry.Should().NotContainKey("userId");        // context: filtered
         entry["amount"].Should().Be(299.90m);          // per-call state: always emitted
     }
+
+    // ── Sanitization ──────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Worker_SanitizesMessage_ControlCharsAndAnsi()
+    {
+        RawLogEvent evt = new(LogLevel.Information, "test", "line1\nline2\x1B[31m!", null, null, null);
+
+        Dictionary<string, object?> entry = await RunSingle(evt, LoggingMatrix.Empty);
+
+        entry["message"].Should().Be("line1line2!");
+    }
+
+    [Fact]
+    public async Task Worker_SanitizesScopeStringValues()
+    {
+        RawLogEvent evt = new(LogLevel.Information, "test", "ok", null, null,
+            Scope(("correlationId", "req\n001")));
+
+        Dictionary<string, object?> entry = await RunSingle(evt, LoggingMatrix.Empty);
+
+        entry["correlationId"].Should().Be("req001");
+    }
+
+    // ── Transport failure isolation + stats ───────────────────────────────────
+
+    private sealed class ThrowingTransport : ITransport
+    {
+        public void Log(IReadOnlyDictionary<string, object?> entry) =>
+            throw new InvalidOperationException("transport boom");
+    }
+
+    [Fact]
+    public async Task Worker_IsolatesTransportFailure_OtherTransportsStillReceive()
+    {
+        Channel<RawLogEvent> channel = UnboundedChannel();
+        CapturingTransport healthy = new();
+        Sl4nStats stats = new();
+        Exception? captured = null;
+        string? failedName = null;
+
+        Sl4nTransportWorker worker = new(
+            channel.Reader, [new ThrowingTransport(), healthy], NoOpMasking(),
+            matrix: null, stats: stats,
+            onLogFailure: (ex, name) => { captured = ex; failedName = name; });
+
+        channel.Writer.TryWrite(SimpleEvent("hello"));
+        channel.Writer.Complete();
+
+        await worker.StartAsync(CancellationToken.None);
+        await channel.Reader.Completion;
+        await worker.StopAsync(CancellationToken.None);
+
+        healthy.Entries.Should().HaveCount(1);                 // failure of one didn't starve the other
+        captured.Should().BeOfType<InvalidOperationException>();
+        failedName.Should().Be(nameof(ThrowingTransport));
+        stats.Snapshot().TransportFailures.Should().Be(1);
+        stats.Snapshot().LogsProcessed.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Worker_Stats_CountLogsProcessed()
+    {
+        Channel<RawLogEvent> channel = UnboundedChannel();
+        Sl4nStats stats = new();
+        Sl4nTransportWorker worker = new(
+            channel.Reader, [new CapturingTransport()], NoOpMasking(), matrix: null, stats: stats);
+
+        channel.Writer.TryWrite(SimpleEvent("a"));
+        channel.Writer.TryWrite(SimpleEvent("b"));
+        channel.Writer.TryWrite(SimpleEvent("c"));
+        channel.Writer.Complete();
+
+        await worker.StartAsync(CancellationToken.None);
+        await channel.Reader.Completion;
+        await worker.StopAsync(CancellationToken.None);
+
+        stats.Snapshot().LogsProcessed.Should().Be(3);
+        stats.Snapshot().TransportFailures.Should().Be(0);
+    }
 }

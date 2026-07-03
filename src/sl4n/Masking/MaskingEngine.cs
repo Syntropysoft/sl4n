@@ -16,7 +16,7 @@ public sealed class MaskingEngine
         _onMaskingError = onMaskingError;
     }
 
-    public static MaskingEngine Create(MaskingConfig config)
+    public static MaskingEngine Create(MaskingConfig config, Action<Exception, string>? onMaskingError = null)
     {
         List<MaskingRule> rules = new();
 
@@ -41,7 +41,7 @@ public sealed class MaskingEngine
             rules.Add(new MaskingRule(pattern, strategy));
         }
 
-        return new MaskingEngine(rules, config.OnMaskingError);
+        return new MaskingEngine(rules, onMaskingError ?? config.OnMaskingError);
     }
 
     // Returns the input sequence unmodified when there are no rules (zero allocation).

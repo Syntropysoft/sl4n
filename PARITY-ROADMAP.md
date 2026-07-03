@@ -34,7 +34,9 @@ Baseline before this work: 81 tests green, `dotnet 10.0.300`, target `net8.0`, A
       today serializes flat (a nested dict value would `ToString()` to garbage). Fold nested masking +
       nested JSON serialization together into **Phase 4**. Func-based custom masks are supported by
       constructing `MaskingRule` directly (config path is declarative pattern+strategy only).
-- [ ] **Phase 3 — Safety boundary** (sanitization of control chars/ANSI, `onLogFailure`, `getStats()`)
+- [x] **Phase 3 — Safety boundary** ✅ (sanitization of control chars/ANSI in the worker, per-transport
+      failure isolation + `OnLogFailure`, `Sl4nStats`/`Snapshot` = `getStats()`, masking-failure counter
+      wired through DI) — 110 tests green, AOT-clean.
 - [ ] **Phase 4 — Transports** (classic/pretty console, durable transport, retention policies)
 - [ ] **Phase 5 — Distributed** (Kafka/Redis instrumentation helpers — adapter package)
 - [ ] **Phase 6 — Testing package (`SpyTransport`) + docs parity**

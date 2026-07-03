@@ -15,4 +15,11 @@ public sealed class Sl4nConfig
     /// Per-call structured state is never filtered by the matrix — only context/scope fields are.
     /// </summary>
     public Dictionary<string, string[]> LoggingMatrix { get; set; } = new();
+
+    /// <summary>
+    /// Invoked when a transport's <c>Log</c> throws. The failure is isolated (other transports still
+    /// receive the entry, the worker keeps running) and counted in <see cref="Sl4nStats"/>; the
+    /// second argument is the transport's type name. Not bindable from configuration.
+    /// </summary>
+    public Action<Exception, string>? OnLogFailure { get; set; }
 }

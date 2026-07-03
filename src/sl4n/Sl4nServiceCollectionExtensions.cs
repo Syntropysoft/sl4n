@@ -31,11 +31,20 @@ public static class Sl4nServiceCollectionExtensions
 
     private static IServiceCollection AddSl4nCore(this IServiceCollection services)
     {
-        // Masking engine
+        // Runtime counters (getStats equivalent)
+        services.TryAddSingleton<Sl4nStats>();
+
+        // Masking engine — masking failures also bump the stats counter, then the user's hook fires
         services.TryAddSingleton<MaskingEngine>(sp =>
         {
             MaskingConfig config = sp.GetRequiredService<IOptions<Sl4nConfig>>().Value.Masking;
-            return MaskingEngine.Create(config);
+            Sl4nStats stats = sp.GetRequiredService<Sl4nStats>();
+            Action<Exception, string>? userHook = config.OnMaskingError;
+            return MaskingEngine.Create(config, (ex, key) =>
+            {
+                stats.IncrMaskingFailures();
+                userHook?.Invoke(ex, key);
+            });
         });
 
         // Logging matrix — per-level context field whitelist
@@ -45,13 +54,18 @@ public static class Sl4nServiceCollectionExtensions
         // Async transport channel
         services.TryAddSingleton(_ => Sl4nChannel.Create());
 
-        // Transport worker — owns masking, matrix filtering + dict building
+        // Transport worker — owns masking, matrix filtering, sanitization + dict building
         services.TryAddSingleton<Sl4nTransportWorker>(sp =>
-            new Sl4nTransportWorker(
+        {
+            Sl4nConfig cfg = sp.GetRequiredService<IOptions<Sl4nConfig>>().Value;
+            return new Sl4nTransportWorker(
                 sp.GetRequiredService<Channel<RawLogEvent>>().Reader,
                 sp.GetServices<ITransport>(),
                 sp.GetRequiredService<MaskingEngine>(),
-                sp.GetRequiredService<LoggingMatrix>()));
+                sp.GetRequiredService<LoggingMatrix>(),
+                sp.GetRequiredService<Sl4nStats>(),
+                cfg.OnLogFailure);
+        });
 
         services.AddHostedService(sp => sp.GetRequiredService<Sl4nTransportWorker>());
 

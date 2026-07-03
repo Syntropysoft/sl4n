@@ -240,6 +240,36 @@ Sl4nContext.Set("step", "payment");
 
 ---
 
+## Reliability & observability
+
+Three safety properties hold on every log:
+
+- **Sanitization.** Control characters and ANSI escape sequences are stripped from the message and
+  field values before any transport sees them — a value can't inject a fake log line. (The exception
+  blob is left intact so stack-trace newlines survive.)
+- **Transport isolation.** If one transport throws, the others still receive the entry and the worker
+  keeps running. The failure is counted and surfaced via `OnLogFailure`.
+- **Masking never throws.** A custom-mask error or a regex timeout redacts that field fail-secure and
+  fires `OnMaskingError`.
+
+Runtime counters are exposed via `Sl4nStats` — the `getStats()` equivalent — resolvable from DI:
+
+```csharp
+Sl4nStatsSnapshot s = provider.GetRequiredService<Sl4nStats>().Snapshot();
+// s.LogsProcessed · s.TransportFailures · s.DroppedEntries · s.MaskingFailures
+```
+
+```csharp
+// wire the failure hooks on the AOT config path
+services.AddSl4n(cfg =>
+{
+    cfg.OnLogFailure           = (ex, transport) => Console.Error.WriteLine($"{transport}: {ex.Message}");
+    cfg.Masking.OnMaskingError = (ex, field)     => Console.Error.WriteLine($"mask {field}: {ex.Message}");
+});
+```
+
+---
+
 ## AOT compatibility
 
 sl4n is `IsAotCompatible=true`. Every code path uses:
