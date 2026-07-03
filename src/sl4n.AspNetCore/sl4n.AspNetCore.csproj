@@ -11,8 +11,8 @@
 
     <!-- Package identity -->
     <PackageId>sl4n.AspNetCore</PackageId>
-    <Version>1.0.0</Version>
-    <PackageReleaseNotes>1.0.0 — first stable release. ASP.NET Core middleware that extracts inbound context from HTTP headers and opens the propagation + MEL log scopes per request. See CHANGELOG.md.</PackageReleaseNotes>
+    <Version>1.0.2</Version>
+    <PackageReleaseNotes>1.0.2 — documentation fix only (smaller, sized README logo on NuGet). No API or behavior changes. See CHANGELOG.md.</PackageReleaseNotes>
     <Authors>Syntropy</Authors>
     <Company>Syntropy</Company>
     <Product>sl4n</Product>

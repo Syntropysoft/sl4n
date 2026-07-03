@@ -4,6 +4,32 @@ All notable changes to **sl4n** are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html) and
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.2] — 2026-06-20
+
+Documentation only — **no API or behavior changes**.
+
+### Fixed
+
+- README logo is now sized (`<img width="150">`) instead of rendering at full resolution on NuGet —
+  markdown image syntax can't constrain the size, so it shipped huge in 1.0.1.
+
+[1.0.2]: https://github.com/Syntropysoft/sl4n/releases/tag/v1.0.2
+
+## [1.0.1] — 2026-06-20
+
+Documentation and packaging only — **no API or behavior changes**. (NuGet packages are immutable, so
+these README fixes ship as a patch rather than replacing 1.0.0.)
+
+### Fixed
+
+- README logo now renders on NuGet — uses the GitHub camo-proxied image URL; the raw
+  `syntropysoft.com` URL is blocked by NuGet's image allowlist.
+- Performance section reworked to be machine-independent: leads with allocations (identical across
+  machines) and ratios, marks absolute nanoseconds as indicative (measured on x86/Windows), and notes
+  that an Apple M2 posts materially lower absolute times.
+
+[1.0.1]: https://github.com/Syntropysoft/sl4n/releases/tag/v1.0.1
+
 ## [1.0.0] — 2026-06-20
 
 First stable release. sl4n is the .NET counterpart of
