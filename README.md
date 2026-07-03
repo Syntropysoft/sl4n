@@ -381,17 +381,30 @@ services.AddSl4n(configuration.GetSection("sl4n"));
 
 ## Performance
 
-Benchmarks run with BenchmarkDotNet, `DefaultJob` (N≈99, CI ~3%), .NET 8, Linux/WSL — AMD Ryzen 7 7735HS.
+**Allocations don't vary by machine and ratios travel well — read the story off those, not the raw
+nanoseconds.** The ns below are one BenchmarkDotNet run on x86/Windows (.NET 8); an Apple M2, where
+much of the work was done, posts materially lower absolute times and a tighter gap to plain MEL. One
+`LogInformation` call, active scope (`correlationId` + `traceId`), masked `Email` field:
 
-| Method | Mean | Allocated |
-|--------|-----:|----------:|
-| MEL no-op (NullLogger) | 73 ns | 72 B |
-| **sl4n (scope + masking, null transport)** | **607 ns** | **482 B** |
-| MEL working (scope + dict, no masking) | 618 ns | 792 B |
-| Serilog (scope, no sinks, via MEL) | 684 ns | 712 B |
-| NLog (scope, NullTarget, via MEL) | 547 ns | 496 B |
+| Method | Allocated | Mean (x86/Win — indicative) | Ratio |
+|--------|----------:|----------------------------:|------:|
+| MEL no-op (NullLogger) | 72 B | 39 ns | 1.00 |
+| NLog (scope, NullTarget, via MEL) | 496 B | 328 ns | 8.3 |
+| MEL working (scope + dict, no masking) | 792 B | 335 ns | 8.5 |
+| **sl4n (scope + masking, null transport)** | **494 B** | **490 ns** | **12.4** |
+| Serilog (scope, no sinks, via MEL) | 712 B | 1,434 ns | 36.4 |
 
-**sl4n with masking active allocates less than MEL without masking** (482 B vs 792 B), is faster than Serilog, and within 11 ns of a working MEL — while doing more work.
+- **Allocation — the portable number: sl4n 494 B.** Less than a plain MEL scope (792 B), about the
+  same as NLog (496 B), ~30% below Serilog (712 B) — *while doing PII masking that none of them do*.
+- **Comfortably faster than Serilog** on every machine tested (~3× here).
+- Slower in raw ns than a no-masking MEL/NLog — and that gap narrows on ARM/M2. Either way it's the
+  **asynchronous handoff**, not masking: `LogInformation` only snapshots scope + enqueues; masking,
+  matrix filtering and sanitization run on a background worker, off the request's hot path. The number
+  is caller-observed latency, *not* the cost of masking.
+
+> Under this tight loop the `sl4n` row is bimodal (fastest ~330 ns, on par with NLog): firing logs
+> back-to-back saturates the async channel, so queued entries survive to Gen1 and add GC jitter. Real
+> apps log sparsely — the channel drains between calls and this doesn't appear.
 
 ---
 
