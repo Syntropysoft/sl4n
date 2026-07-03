@@ -11,7 +11,8 @@
 
     <!-- Package identity -->
     <PackageId>sl4n.AspNetCore</PackageId>
-    <Version>1.0.0-beta.1</Version>
+    <Version>1.0.0</Version>
+    <PackageReleaseNotes>1.0.0 — first stable release. ASP.NET Core middleware that extracts inbound context from HTTP headers and opens the propagation + MEL log scopes per request. See CHANGELOG.md.</PackageReleaseNotes>
     <Authors>Syntropy</Authors>
     <Company>Syntropy</Company>
     <Product>sl4n</Product>
@@ -21,10 +22,10 @@
       NativeAOT compatible out-of-the-box.
     </Description>
     <PackageTags>logging;masking;context-propagation;aspnetcore;middleware;observability;aot</PackageTags>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <PackageProjectUrl>https://github.com/syntropy/sl4n</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/syntropy/sl4n</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/Syntropysoft/sl4n</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/Syntropysoft/sl4n</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
 
     <!-- Symbols -->

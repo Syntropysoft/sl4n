@@ -56,7 +56,9 @@ Baseline before this work: 81 tests green, `dotnet 10.0.300`, target `net8.0`, A
 - [~] **Phase 6 — Testing package + docs parity** — DONE: `sl4n.Testing` project with `SpyTransport`
       (capture + `AtLevel`/`WithField`/`AnyMessageContains`) + `UseSpyTransport` DI helper; added to
       solution + test project; README "Testing your code" section — 132 tests, full solution builds.
-      REMAINING: dedicated `docs/` pages mirroring SyntropyLog (optional).
+      README rewritten in SyntropyLog's "AI-readable" structure (pitch → quick start with exact I/O →
+      what-it-is + pillars → comparison table → declarative-shift → feature sections → what's-in-the-box →
+      security). REMAINING: dedicated `docs/` pages mirroring SyntropyLog's `docs/` (optional).
 
 All six phases delivered. Optional follow-ups: dedicated `docs/` pages mirroring SyntropyLog;
 a `MaxBufferedEntries` cap on `DurableFileTransport` for very long outages (currently unbounded).

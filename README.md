@@ -1,96 +1,139 @@
-<p align="center">
-  <img src="https://syntropysoft.com/syntropylog-logo.png" alt="SyntropyLog Logo" width="170"/>
-</p>
+![SyntropyLog](https://syntropysoft.com/syntropylog-logo.png)
 
-<h1 align="center">sl4n</h1>
-<h2  align="center">Syntropy Log for .Net</h2>
+# sl4n — Syntropy Log for .NET
 
-<p align="center">
-  <strong>The Declarative Observability Framework for .NET.</strong>
-  <br />
-  You declare what each log should carry. sl4n handles the rest.
-</p>
+**The declarative observability framework for .NET — built on Microsoft.Extensions.Logging.**
+Correlation IDs, PII masking, per-level field control and retention — declared **once** and enforced on
+every log, before it reaches any transport. Fail-safe by design (logging can never crash your app) and
+NativeAOT-compatible.
 
-<p align="center">
-  <a href="#"><img src="https://img.shields.io/badge/status-alpha-orange.svg" alt="Alpha"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License"></a>
-  <a href="#"><img src="https://img.shields.io/badge/.NET-8%2B-blue.svg" alt=".NET 8+"></a>
-  <a href="#"><img src="https://img.shields.io/badge/NativeAOT-compatible-brightgreen.svg" alt="NativeAOT compatible"></a>
-</p>
+[![NuGet](https://img.shields.io/nuget/v/sl4n.svg)](https://www.nuget.org/packages/sl4n) ![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg) ![.NET 8+](https://img.shields.io/badge/.NET-8%2B-blue.svg) ![NativeAOT compatible](https://img.shields.io/badge/NativeAOT-compatible-brightgreen.svg)
 
----
-
-## What is sl4n?
-
-Every .NET team writes the same boilerplate: thread `correlationId` through every method signature, scrub `password` fields before logging, repeat the same `using (_logger.BeginScope(...))` on every controller action.
-
-sl4n solves the boilerplate problem declaratively. You declare the rules once at startup. The framework applies them consistently on every log call, across every service — without you thinking about it again.
-
-```csharp
-public class PaymentService
-{
-    private readonly ILogger<PaymentService> _logger;
-
-    public void Charge(decimal amount, string email)
-    {
-        _logger.LogInformation("Card charged {Amount} for {Email}", amount, email);
-        // → {"level":"information","correlationId":"req-001","amount":299.9,"email":"j**n@example.com"}
-        //    ^^^^^^^^^^^^^^^^^^^^^ scope from Sl4nMiddleware    ^^^^^^^^^^^^^ masking by sl4n
-    }
-}
-```
-
-The `correlationId` propagated automatically from the inbound HTTP header. The `email` was masked automatically. Your business code is unchanged.
-
----
-
-## The declarative shift
-
-| Instead of... | You declare... | sl4n does automatically |
-|---------------|----------------|------------------------|
-| Threading `correlationId` through every method | `app.UseSl4n()` | Extracts inbound headers, pushes context to every log in the request via `AsyncLocal` |
-| Scrubbing sensitive fields before logging | `"masking": { "enableDefaultRules": true }` | Masks email, password, token, credit card on every log |
-| Repeating `BeginScope(new { correlationId })` everywhere | Configured once | Scope is opened by the middleware — available to every `ILogger` in the call chain |
-| Manually building outbound headers per service | `context.outbound` config | `Sl4nDelegatingHandler` injects the right wire names per destination automatically |
-
----
-
-## Packages
-
-| Package | Description |
-|---------|-------------|
-| `sl4n` | Core — masking, context propagation, async transport, logging matrix, retention |
-| `sl4n.AspNetCore` | Middleware — extracts inbound context, opens MEL scope per request |
-| `sl4n.Testing` | `SpyTransport` — capture emitted entries and assert on them in tests |
+> **sl4n is the .NET counterpart of [SyntropyLog](https://github.com/Syntropysoft/SyntropyLog)** — the
+> Node.js / TypeScript observability framework (also on [npm as `syntropylog`](https://www.npmjs.com/package/syntropylog)).
+> Same concepts and declarative model, adapted idiomatically to .NET: it rides on
+> `Microsoft.Extensions.Logging` (you keep `ILogger<T>`) instead of a bespoke logger, is configured
+> through DI (`AddSl4n`) instead of a global `init()`, and needs **no native addon** — .NET already
+> compiles to native, so the whole pipeline is NativeAOT-safe.
 
 ---
 
 ## Quick start
 
+```bash
+dotnet add package sl4n
+dotnet add package sl4n.AspNetCore
+```
+
 ```csharp
-// Program.cs
+// Program.cs — one line wires the whole pipeline into Microsoft.Extensions.Logging
 builder.Services.AddSl4n(builder.Configuration.GetSection("sl4n"));
 builder.Services.AddSl4nAspNetCore();
-
 app.UseSl4n();
 ```
+
+```csharp
+// Any service — you keep using the standard ILogger<T>. Nothing bespoke.
+public class PaymentService(ILogger<PaymentService> logger)
+{
+    public void Charge(decimal amount, string email) =>
+        logger.LogInformation("Card charged {Amount} for {Email}", amount, email);
+}
+```
+
+What lands on the console (structured JSON, one line):
+
+```json
+{"timestamp":"2026-06-20T13:11:48.0600000+00:00","level":"information","category":"PaymentService","message":"Card charged 299.9 for j**n@example.com","correlationId":"req-001","Amount":299.9,"Email":"j**n@example.com"}
+```
+
+`correlationId` was propagated automatically from the inbound HTTP header; `Email` was masked automatically — **by configuration, not magic**. Your business code is unchanged. From here you shape it: which fields each level emits, masking rules, where logs go, retention — each declared once. The sections below are how.
+
+> **Masking is by field name.** A field whose *key* matches a rule is masked; free text you concatenate into the message is not. Pass sensitive data as **keyed structured fields** (`"… {Email}", email`) — not baked into the message string.
+
+---
+
+## What sl4n is
+
+> **Not a logger — a log pipeline on top of MEL.** With Serilog, NLog, or raw `Microsoft.Extensions.Logging` you wire correlation IDs, PII redaction, and per-level field control yourself, in every service. sl4n does it for you: declare it **once** in `AddSl4n(...)`, and it runs on every `ILogger` call, in every async chain, across every service — before the entry reaches the **console, a database, an HTTP sink, or wherever your `ITransport` sends it.**
+
+Every .NET team writes the same boilerplate: thread `correlationId` through every method signature, scrub `password`/`email` before logging, repeat the same `using (_logger.BeginScope(...))` on every controller action. sl4n solves that **declaratively** — you declare the rules once at startup and the framework enforces them on every log call.
+
+It is scoped on purpose: sl4n owns the **log pipeline up to the moment of persistence** — matrix filtering, context propagation, masking, sanitization, serialization, retention metadata. **It does not manage any backend** (no Redis/HTTP/DB clients in the core — its only dependencies are `Microsoft.Extensions.*`). Where the entry goes is an `ITransport` you write.
+
+Five pillars:
+
+- **Logging Matrix** — a declarative whitelist of context fields per log level. If a field isn't in the matrix for that level, it never reaches a transport. Field control by config, not code review.
+- **Masking** — PII redacted **by field name**, before any transport, in a never-throwing pipeline with a ReDoS guard. Non-strings under a sensitive key are redacted whole.
+- **Retention-aware tagging** — `BeginRetentionScope("SOX_AUDIT_TRAIL")` stamps compliance metadata onto every log in scope so a downstream store routes it by policy.
+- **Silent-observer safety** — sanitization, per-transport failure isolation, never-throw masking. Logging cannot crash your app; failures surface through hooks and `Sl4nStats` counters.
+- **Durable buffer** — `DurableFileTransport` is a self-emptying disk spool that keeps audit entries safe across a backend outage — no rotation, no maintenance.
+
+Built on `Microsoft.Extensions.Logging` (you keep `ILogger<T>`), DI-native, and **NativeAOT-compatible** (reflection-free pipeline).
+
+---
+
+## How it compares
+
+Serilog and NLog are excellent logging frameworks. sl4n is a different layer — a **pipeline** that does *in the framework* what a logger leaves to you, running on top of MEL so you keep the standard `ILogger`:
+
+| | Serilog / NLog / raw MEL | sl4n |
+|---|---|---|
+| **Category** | logger | log pipeline (matrix → masking → sanitization → serialization → routing) |
+| **PII masking** | DIY (enrichers / destructuring policies) | built in, **by field name**, before any sink, never-throws |
+| **Correlation IDs** | you thread them / manual scopes | automatic via `AsyncLocal` + drop-in middleware, declared once |
+| **Per-level field control** | manual | declarative **Logging Matrix** |
+| **Retention / audit tagging** | DIY | first-class `BeginRetentionScope` — travels with the entry |
+| **If logging throws** | can bubble into your code | **silent observer** — logging never throws |
+| **Durability across outages** | sink-specific | `DurableFileTransport` — self-emptying disk buffer |
+| **NativeAOT** | varies | AOT-compatible — `[GeneratedRegex]`, `Utf8JsonWriter`, no reflection |
+
+---
+
+## The declarative shift
+
+With Serilog/NLog/MEL you **write logging**. With sl4n you **declare observability**.
+
+| Instead of… | You declare… | sl4n does automatically |
+|---|---|---|
+| Threading `correlationId` through every method | `app.UseSl4n()` | Extracts inbound headers, pushes context to every log in the request via `AsyncLocal` |
+| Scrubbing sensitive fields before logging | `"masking": { "enableDefaultRules": true }` | Masks email, password, token, card, ssn, phone on every log |
+| Repeating `BeginScope(new { correlationId })` everywhere | Configured once | Scope opened by the middleware — available to every `ILogger` in the call chain |
+| Deciding which fields each level logs | `loggingMatrix` | Whitelists context fields per level; the rest never reach a transport |
+| Building outbound headers per downstream target | `context.outbound` | `Sl4nDelegatingHandler` injects the right wire names per destination |
+| Routing compliance logs manually | `BeginRetentionScope('SOX…')` | Stamps `retention`/`retentionClass`/`retentionDays` on every log in scope |
+
+---
+
+## A fuller example
+
+The same start, now with a logging matrix (field control per level) and masking — all declarative:
 
 ```json
 // appsettings.json
 {
   "sl4n": {
     "masking": { "enableDefaultRules": true },
+    "loggingMatrix": {
+      "default":     ["correlationId"],
+      "information": ["correlationId", "userId", "operation"],
+      "error":       ["*"]
+    },
     "context": {
       "source": "frontend",
-      "inbound": {
-        "frontend": { "correlationId": "X-Correlation-ID", "traceId": "X-Trace-ID" }
-      },
-      "outbound": {
-        "http": { "correlationId": "X-Correlation-ID", "traceId": "X-Trace-ID" }
-      }
+      "autoGenerate": ["correlationId"],
+      "inbound":  { "frontend": { "correlationId": "X-Correlation-ID", "traceId": "X-Trace-ID" } },
+      "outbound": { "http":     { "correlationId": "X-Correlation-ID", "traceId": "X-Trace-ID" } }
     }
   }
 }
+```
+
+```csharp
+builder.Services.AddSl4n(builder.Configuration.GetSection("sl4n"));
+builder.Services.AddSl4nAspNetCore();
+app.UseSl4n();
+// No transport configured ⇒ structured JSON to the console by default.
 ```
 
 ---
@@ -112,104 +155,13 @@ HTTP request ──► Sl4nMiddleware
 
 ---
 
-## Console output
+## Logging Matrix — the differentiator
 
-Every entry carries an ISO-8601 `timestamp` captured at log time. Two console transports ship:
+A declarative contract for **context fields**: a per-level whitelist deciding which of the auto-propagating context values surface at each level. A field not whitelisted for a level never reaches a transport — reviewable as one config object instead of by grepping every log call.
 
-- **`ConsoleTransport`** (default) — one JSON object per line, for machine ingestion.
-- **`ClassicConsoleTransport`** — human-readable `2026-06-20T… [INF] category: message key=value` for
-  local development. Swap it in after `AddSl4n`:
-
-```csharp
-builder.Services.AddSl4n(builder.Configuration.GetSection("sl4n"));
-builder.Services.UseClassicConsole();   // replaces the JSON console transport
-```
-
-Both implement `ITransport` — write your own for any backend (the Universal Adapter role).
-
----
-
-## Durable buffering
-
-Wrap any transport in a `DurableFileTransport` to survive backend outages. It's a **buffer, not an
-archive**: in the happy path entries go straight to the inner transport and disk is untouched. When
-the inner transport throws, entries spool to a file and retry on later logs and on restart; once the
-backlog drains, the file is **deleted**. The spool only ever holds the undelivered backlog — no
-rotation, no rename, no cleanup to maintain.
-
-```csharp
-ITransport sink = new MyHttpTransport(/* … */);         // your real sink; may fail transiently
-var durable = new DurableFileTransport(sink, "buffer/spool.jsonl");
-services.UseTransport(durable);                          // register as your ITransport
-```
-
-A crash mid-outage is recovered on the next startup: the leftover spool is replayed to the inner
-transport when a fresh `DurableFileTransport` is constructed.
-
----
-
-## Default masking rules
-
-| Field pattern | Strategy | Example |
-|---------------|----------|---------|
-| `email`, `mail` | Email — first + last char | `j**n@example.com` |
-| `password`, `pass`, `pwd`, `secret` | Full mask | `**********` |
-| `token`, `key`, `auth`, `jwt`, `bearer` | Full mask | `**********` |
-| `credit_card`, `card_number` | Last four | `************1234` |
-| `ssn`, `social_security` | Last four | `*****6789` |
-| `phone`, `mobile`, `tel` | Last four | `******4567` |
-
-### Custom rules & safety
-
-Custom rules are **appended** to the defaults (keep `enableDefaultRules` on) — matched by field name:
+> **Matrix governs context, not per-call metadata.** The fields you pass to `logger.LogInformation("… {Amount}", amount)` are always emitted (and masked) — if you don't want a field logged, don't pass it. The matrix exists for the auto-propagating *context* you can't trim at each call site.
 
 ```json
-// appsettings.json — inside "sl4n"
-"masking": {
-  "enableDefaultRules": true,
-  "regexTimeoutMs": 100,
-  "rules": [
-    { "pattern": "^(cvv|cvc|securityCode)$", "strategy": "FullMask" }
-  ]
-}
-```
-
-Reference `MaskKeys` instead of string literals to keep patterns out of secret scanners (Sonar S2068):
-
-```csharp
-cfg.Masking.Rules.Add(new MaskingRuleConfig
-{
-    Pattern  = MaskKeys.Pattern(MaskKeys.Token),  // ^(token|key|auth|jwt|bearer)$
-    Strategy = MaskingStrategy.FullMask,
-});
-```
-
-Guarantees:
-
-- **Non-string under a sensitive key → `[REDACTED]`.** An object, array, or number under a
-  sensitive-named field is redacted whole, never stringified — nested PII can't leak through.
-- **Masking never throws.** A custom-mask exception or a regex timeout redacts that one field
-  fail-secure and fires `OnMaskingError`; logging keeps working.
-- **ReDoS guard.** Custom-rule regexes run under `regexTimeoutMs` (default 100 ms). The built-in
-  defaults are linear, source-generated `[GeneratedRegex]` — not subject to the timeout.
-
-**Scope — by field name, never free text.** A value is masked because its *key* matches a rule, not
-because the string *looks* sensitive. Masking does **not** deep-walk nested object graphs — that
-would move a mountain of data on every log and penalize latency. Structure sensitive data as keyed
-fields; a nested object under a sensitive key is still redacted whole. This mirrors SyntropyLog's
-by-key spirit, kept allocation-light and AOT-safe for .NET.
-
----
-
-## Logging matrix
-
-*"You declare what each log should carry"* — this is where. The **logging matrix** is a per-level
-whitelist of **context fields**: a field not whitelisted for a level never reaches a transport. The
-same request context emits different subsets at different levels — narrow at `information`, wide at
-`error` — reviewable as one config object instead of by grepping every log call.
-
-```json
-// appsettings.json — inside the "sl4n" section
 "loggingMatrix": {
   "default":     ["correlationId"],
   "information": ["correlationId", "userId", "operation"],
@@ -232,17 +184,54 @@ cfg.LoggingMatrix = new MatrixBuilder()
 | `Trace` … `Critical` | Per-level whitelist — MEL level names, case-insensitive |
 | `["*"]` | Allow every context field at that level |
 
-**It filters context only.** The per-call fields you pass to
-`logger.LogInformation("Charged {Amount}", amount)` are always emitted (and masked) — the matrix
-governs only the auto-propagating scope you can't trim at each call site. Leave a field off a level's
-list to keep it out of that level; always define `default`. When no matrix is configured, every
-context field passes through (backward compatible).
+Always define `default`. When no matrix is configured, every context field passes through (backward compatible).
 
 ---
 
-## Propagation headers
+## Masking
 
-`correlationId`, `traceId` are **conceptual names internal to the framework** — not the names that travel on the wire. The wire name per destination is declared by you in configuration.
+Masking runs automatically on every entry before it reaches any transport, matched **by field name**.
+
+| Field key (examples) | Strategy | Result |
+|---|---|---|
+| `email`, `mail` | Email — first + last char | `j**n@example.com` |
+| `password`, `pass`, `pwd`, `secret` | Full mask | `**********` |
+| `token`, `key`, `auth`, `jwt`, `bearer` | Full mask | `**********` |
+| `credit_card`, `card_number` | Last four | `************1234` |
+| `ssn`, `social_security` | Last four | `*****6789` |
+| `phone`, `mobile`, `tel` | Last four | `******4567` |
+
+Keep the defaults on and add your own rules **on top** — matched by field name. Reference `MaskKeys` instead of string literals to keep patterns out of secret scanners (Sonar S2068):
+
+```json
+"masking": {
+  "enableDefaultRules": true,
+  "regexTimeoutMs": 100,
+  "rules": [ { "pattern": "^(cvv|cvc|securityCode)$", "strategy": "FullMask" } ]
+}
+```
+
+```csharp
+cfg.Masking.Rules.Add(new MaskingRuleConfig
+{
+    Pattern  = MaskKeys.Pattern(MaskKeys.Token),   // ^(token|key|auth|jwt|bearer)$
+    Strategy = MaskingStrategy.FullMask,
+});
+```
+
+Guarantees:
+
+- **Non-string under a sensitive key → `[REDACTED]`.** An object, array, or number under a sensitive-named field is redacted whole, never stringified — nested PII can't leak through.
+- **Masking never throws.** A custom-mask exception or a regex timeout redacts that one field fail-secure and fires `OnMaskingError`; logging keeps working.
+- **ReDoS guard.** Custom-rule regexes run under `regexTimeoutMs` (default 100 ms). The built-in defaults are linear, source-generated `[GeneratedRegex]`.
+
+> **Scope — by field name, never free text.** A value is masked because its *key* matches a rule, not because the string *looks* sensitive. Masking does **not** deep-walk nested object graphs — that would move a mountain of data on every log and penalize latency. Structure sensitive data as keyed fields; a nested object under a sensitive key is still redacted whole. This mirrors SyntropyLog's by-key spirit, kept allocation-light and AOT-safe for .NET.
+
+---
+
+## Context propagation
+
+Conceptual field names (`correlationId`, `traceId`, `tenantId`) are internal keys. The name that travels **on the wire** is declared by you per source/target; the framework translates at the moment of sending. Application code only ever works with conceptual names.
 
 ```
 inbound['frontend']   internal context    outbound['http']       outbound['kafka']
@@ -251,76 +240,30 @@ X-Correlation-ID  ->  correlationId   ->  X-Correlation-ID   /   correlationId
 X-Trace-ID        ->  traceId         ->  X-Trace-ID         /   traceId
 ```
 
-Application code never sees wire names. It only works with conceptual names.
+**Inbound** is handled by the ASP.NET Core middleware (`app.UseSl4n()`): it extracts the configured headers for `context.source`, auto-generates any field listed in `context.autoGenerate` (UUID), opens the propagation + log scopes for the request, and echoes response headers when `context.responseTarget` is set.
 
----
-
-## Outbound propagation
+**Outbound** — inject the wire headers on an outgoing `HttpClient` via `Sl4nDelegatingHandler`:
 
 ```csharp
-// Register for a named HttpClient
 builder.Services.AddHttpClient("downstream")
     .AddHttpMessageHandler(sp =>
         new Sl4nDelegatingHandler(sp.GetRequiredService<IOptions<Sl4nConfig>>(), target: "http"));
 ```
 
-Fields present in `Sl4nContext.Current` are automatically injected as outbound headers using the wire names configured under `context.outbound`.
-
----
-
-## Manual context
+**Manual context** — push fields outside a request (background jobs, workers):
 
 ```csharp
-// Push fields for the duration of a scope
-using Sl4nScope scope = Sl4nContext.Push(
-    ("correlationId", "req-001"),
-    ("userId",        "usr-42")
-);
-
-// Or set individual fields
+using Sl4nScope scope = Sl4nContext.Push(("correlationId", "req-001"), ("userId", "usr-42"));
 Sl4nContext.Set("step", "payment");
-```
-
----
-
-## Reliability & observability
-
-Three safety properties hold on every log:
-
-- **Sanitization.** Control characters and ANSI escape sequences are stripped from the message and
-  field values before any transport sees them — a value can't inject a fake log line. (The exception
-  blob is left intact so stack-trace newlines survive.)
-- **Transport isolation.** If one transport throws, the others still receive the entry and the worker
-  keeps running. The failure is counted and surfaced via `OnLogFailure`.
-- **Masking never throws.** A custom-mask error or a regex timeout redacts that field fail-secure and
-  fires `OnMaskingError`.
-
-Runtime counters are exposed via `Sl4nStats` — the `getStats()` equivalent — resolvable from DI:
-
-```csharp
-Sl4nStatsSnapshot s = provider.GetRequiredService<Sl4nStats>().Snapshot();
-// s.LogsProcessed · s.TransportFailures · s.DroppedEntries · s.MaskingFailures
-```
-
-```csharp
-// wire the failure hooks on the AOT config path
-services.AddSl4n(cfg =>
-{
-    cfg.OnLogFailure           = (ex, transport) => Console.Error.WriteLine($"{transport}: {ex.Message}");
-    cfg.Masking.OnMaskingError = (ex, field)     => Console.Error.WriteLine($"mask {field}: {ex.Message}");
-});
 ```
 
 ---
 
 ## Retention policies
 
-Declare named retention policies (compliance metadata), then tag the logs that must obey them — the
-.NET analog of SyntropyLog's `withRetention('SOX_AUDIT_TRAIL')`. The emitted entry carries
-`retention` / `retentionClass` / `retentionDays` so a downstream store can apply the right retention.
+Declare named retention policies (compliance metadata), then tag the logs that must obey them — the .NET analog of SyntropyLog's `withRetention('SOX_AUDIT_TRAIL')`. The emitted entry carries `retention` / `retentionClass` / `retentionDays` so a downstream store applies the right retention.
 
 ```json
-// appsettings.json — inside "sl4n"
 "retentionPolicies": {
   "SOX_AUDIT_TRAIL": { "days": 2555, "class": "SOX" },
   "GDPR_STANDARD":   { "days": 365,  "class": "GDPR" }
@@ -335,27 +278,102 @@ using (logger.BeginRetentionScope("SOX_AUDIT_TRAIL"))
 }
 ```
 
-The tag rides a MEL scope, so every log in the call chain inherits it. Retention metadata **bypasses
-the logging matrix** — it's a structural compliance stamp, not user context.
+The tag rides a MEL scope, so every log in the call chain inherits it. Retention metadata **bypasses the logging matrix** — it's a structural compliance stamp, not user context.
+
+---
+
+## Transports
+
+Default output is structured JSON (no transport needed). Every entry carries an ISO-8601 `timestamp` captured **at log time** (not at async-worker time). Transports run on a background `Channel` worker, so logging never blocks the request.
+
+| Transport | Output | Use case |
+|---|---|---|
+| *(default)* `ConsoleTransport` | Structured JSON, one line | Production, log aggregators |
+| `ClassicConsoleTransport` | `ts [INF] category: message key=value` | Local development |
+| `DurableFileTransport` | Wraps any inner transport, **buffered** | Surviving backend outages |
+| `SpyTransport` (`sl4n.Testing`) | In-memory capture | Tests |
+
+```csharp
+builder.Services.AddSl4n(/* … */);
+builder.Services.UseClassicConsole();          // swap JSON console for the human-readable one
+// or: services.UseTransport(myTransport);     // replace all transports with your own ITransport
+```
+
+Any `ITransport` you write receives the already-masked, matrix-filtered, sanitized entry — the Universal Adapter role: connect it to a DB, HTTP API, or queue.
+
+### Durable buffering
+
+Wrap any transport in a `DurableFileTransport` to survive backend outages. It's a **buffer, not an archive**: in the happy path entries go straight to the inner transport and disk is untouched. When the inner transport throws, entries spool to a file and retry on later logs and on restart; once the backlog drains, the file is **deleted**. The spool only ever holds the undelivered backlog — no rotation, no rename, no cleanup to maintain.
+
+```csharp
+ITransport sink = new MyHttpTransport(/* … */);        // your real sink; may fail transiently
+services.UseTransport(new DurableFileTransport(sink, "buffer/spool.jsonl"));
+```
+
+A crash mid-outage is recovered on the next startup: the leftover spool is replayed when a fresh `DurableFileTransport` is constructed. Cost is O(1) per log while the sink is down, O(n) once on recovery.
+
+---
+
+## Reliability & observability
+
+Three safety properties hold on every log:
+
+- **Sanitization.** Control characters and ANSI escape sequences are stripped from the message and field values before any transport sees them — a value can't inject a fake log line. (The exception blob is left intact so stack-trace newlines survive.)
+- **Transport isolation.** If one transport throws, the others still receive the entry and the worker keeps running. The failure is counted and surfaced via `OnLogFailure`.
+- **Masking never throws.** A custom-mask error or a regex timeout redacts that field fail-secure and fires `OnMaskingError`.
+
+Runtime counters are exposed via `Sl4nStats` — the `getStats()` equivalent — resolvable from DI:
+
+```csharp
+Sl4nStatsSnapshot s = provider.GetRequiredService<Sl4nStats>().Snapshot();
+// s.LogsProcessed · s.TransportFailures · s.DroppedEntries · s.MaskingFailures
+
+services.AddSl4n(cfg =>
+{
+    cfg.OnLogFailure           = (ex, transport) => Console.Error.WriteLine($"{transport}: {ex.Message}");
+    cfg.Masking.OnMaskingError = (ex, field)     => Console.Error.WriteLine($"mask {field}: {ex.Message}");
+});
+```
+
+---
+
+## Testing
+
+`sl4n.Testing` ships a `SpyTransport` that captures emitted entries — so you assert on exactly what would have shipped: levels, messages, context fields, and **masked** values.
+
+```csharp
+var spy = new SpyTransport();
+var services = new ServiceCollection();
+services.AddSl4n(cfg => cfg.Masking.EnableDefaultRules = true);
+services.UseSpyTransport(spy);           // capture entries instead of writing to the console
+
+// … exercise the code under test, then assert on what was emitted:
+spy.Entries[0]["Email"].Should().Be("j**n@example.com");   // masking really ran
+spy.AtLevel("error").Should().BeEmpty();
+spy.AnyMessageContains("information", "Order created").Should().BeTrue();
+```
+
+`SpyTransport` surface: `Entries`, `Count`, `Clear()`, `AtLevel(level)`, `WithField(key, value)`, `AnyMessageContains(level, substring)`.
 
 ---
 
 ## AOT compatibility
 
-sl4n is `IsAotCompatible=true`. Every code path uses:
-- `[GeneratedRegex]` — compile-time regex, no reflection
-- `Utf8JsonWriter` — no `JsonSerializer` reflection
+sl4n is `IsAotCompatible=true`. Every code path is reflection-free:
+
+- `[GeneratedRegex]` — compile-time regex for the default rules
+- `Utf8JsonWriter` / `JsonDocument` — no `JsonSerializer` reflection
 - `Action<T>` configuration overload — no `IConfiguration` binding reflection
 
 ```csharp
-// AOT-safe
+// AOT-safe — the Action<Sl4nConfig> overload
 services.AddSl4n(cfg =>
 {
     cfg.Masking.EnableDefaultRules = true;
     cfg.Context.Source = "frontend";
 });
 
-// Not AOT-safe (annotated with [RequiresUnreferencedCode])
+// Reflection-based (annotated [RequiresUnreferencedCode]) — fine for non-AOT apps
 services.AddSl4n(configuration.GetSection("sl4n"));
 ```
 
@@ -373,58 +391,47 @@ Benchmarks run with BenchmarkDotNet, `DefaultJob` (N≈99, CI ~3%), .NET 8, Linu
 | Serilog (scope, no sinks, via MEL) | 684 ns | 712 B |
 | NLog (scope, NullTarget, via MEL) | 547 ns | 496 B |
 
-**sl4n with masking active allocates less than MEL without masking** (482 B vs 792 B). It is faster than Serilog and within 11 ns of MEL — doing more work.
+**sl4n with masking active allocates less than MEL without masking** (482 B vs 792 B), is faster than Serilog, and within 11 ns of a working MEL — while doing more work.
 
 ---
 
 ## What sl4n is not
 
-sl4n is a structured logging and context propagation framework. It is not:
-
-- A log aggregation backend (use Elasticsearch, Loki, CloudWatch)
-- A distributed tracing system (use OpenTelemetry)
-- A metrics collector (use Prometheus, Datadog)
-
-It is the component that makes every log line correct, consistent, and safe before it reaches any of those systems.
+It is a structured-logging and context-propagation framework. It is **not** a log aggregation backend (use Elasticsearch / Loki / CloudWatch), a distributed-tracing system (use OpenTelemetry), or a metrics collector (use Prometheus / Datadog). It is the component that makes every log line **correct, consistent, and safe before it reaches any of those systems**.
 
 ---
 
 ## Security
 
-**No network I/O at runtime.** sl4n does not contact any external URLs. The only output is what your transports produce.
-
-**No extra runtime dependencies.** The core package depends only on `Microsoft.Extensions.*` — already present in any ASP.NET Core application.
-
----
-
-## Testing your code
-
-`sl4n.Testing` ships a `SpyTransport` that captures emitted entries — so you assert on exactly what
-would have shipped: levels, messages, context fields, and **masked** values.
-
-```csharp
-var spy = new SpyTransport();
-var services = new ServiceCollection();
-services.AddSl4n(cfg => cfg.Masking.EnableDefaultRules = true);
-services.UseSpyTransport(spy);           // capture entries instead of writing to the console
-
-// … exercise the code under test, then assert on what was emitted:
-spy.Entries[0]["Email"].Should().Be("j**n@example.com");   // masking really ran
-spy.AtLevel("error").Should().BeEmpty();
-spy.AnyMessageContains("information", "Order created").Should().BeTrue();
-```
+- **No network I/O at runtime.** sl4n contacts no external URLs; the only output is what your transports produce.
+- **No extra runtime dependencies.** The core depends only on `Microsoft.Extensions.*` — already present in any ASP.NET Core app.
+- **Hardened pipeline.** Masking never throws, custom regexes run under a ReDoS timeout, control characters are sanitized out, and a failing transport is isolated from the rest.
 
 ---
 
-## Running the tests
+## What's in the box
+
+| Feature | One-liner | API |
+|---|---|---|
+| **Logging Matrix** | Per-level whitelist of context fields; typed `MatrixBuilder` | `Sl4nConfig.LoggingMatrix` |
+| **Masking** | Redact PII by field name before any transport; custom rules, ReDoS guard, never-throws | `MaskingConfig`, `MaskKeys`, `MaskingStrategy` |
+| **Context propagation** | Conceptual↔wire header translation via `AsyncLocal` | `Sl4nContext`, `ContextConfig` |
+| **ASP.NET Core middleware** | Extract inbound context + open MEL scope per request | `sl4n.AspNetCore`, `app.UseSl4n()` |
+| **Outbound propagation** | Inject wire headers on outgoing `HttpClient` calls | `Sl4nDelegatingHandler` |
+| **Retention** | Compliance tags stamped on entries, bypassing the matrix | `Sl4nRetention.BeginRetentionScope`, `RetentionPolicy` |
+| **Transports** | JSON + classic console; write your own `ITransport` | `ConsoleTransport`, `ClassicConsoleTransport` |
+| **Durable buffer** | Self-emptying disk spool that survives outages | `DurableFileTransport` |
+| **Silent-observer safety** | Sanitization + transport isolation + never-throw masking | (pipeline) |
+| **Self-observability** | Runtime counters — logs, transport/masking failures, drops | `Sl4nStats.Snapshot()` |
+| **Testing toolkit** | Capture emitted entries and assert on them | `sl4n.Testing`, `SpyTransport` |
+| **NativeAOT** | Reflection-free pipeline (`GeneratedRegex`, `Utf8JsonWriter`) | `IsAotCompatible=true` |
+
+---
+
+## Running the tests & benchmarks
 
 ```bash
 dotnet test tests/sl4n.Tests/sl4n.Tests.csproj
-```
-
-## Running the benchmarks
-
-```bash
 dotnet run --project benchmarks/sl4n.Benchmarks --configuration Release -- --filter '*ComparativeBenchmark*'
 ```
 
@@ -432,4 +439,4 @@ dotnet run --project benchmarks/sl4n.Benchmarks --configuration Release -- --fil
 
 ## License
 
-Apache 2.0 — see [LICENSE](./LICENSE).
+Apache-2.0 — see [LICENSE](./LICENSE).
