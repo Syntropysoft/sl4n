@@ -4,6 +4,18 @@ All notable changes to **sl4n** are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html) and
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.3] — 2026-06-20
+
+Documentation only — **no API or behavior changes**.
+
+### Removed
+
+- README logo. NuGet renders a markdown image at full resolution (oversized) and escapes an HTML
+  `<img width="…">` to raw text, so there is no way to show it at a sensible size — the `sl4n` heading
+  is enough. (Still fine on GitHub without it.)
+
+[1.0.3]: https://github.com/Syntropysoft/sl4n/releases/tag/v1.0.3
+
 ## [1.0.2] — 2026-06-20
 
 Documentation only — **no API or behavior changes**.

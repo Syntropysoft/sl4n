@@ -1,5 +1,3 @@
-<img src="https://camo.githubusercontent.com/cbce90a3a43bbeda6494c1ddbfb309c0cb1e1d8c8b5abaa0f875b1d9dd8b5da7/68747470733a2f2f73796e74726f7079736f66742e636f6d2f73796e74726f70796c6f672d6c6f676f2e706e67" alt="SyntropyLog" width="150" />
-
 # sl4n — Syntropy Log for .NET
 
 **The declarative observability framework for .NET — built on Microsoft.Extensions.Logging.**
