@@ -101,6 +101,20 @@ public sealed class Sl4nLoggerTests
     }
 
     [Fact]
+    public async Task Log_IncludesTimestamp_CapturedAtLogTime()
+    {
+        await using TestLogPipeline pipeline = new();
+        ILogger logger = pipeline.Provider.CreateLogger("test");
+
+        logger.LogInformation("hi");
+        await pipeline.DrainAsync();
+
+        IReadOnlyDictionary<string, object?> entry = pipeline.Transport.Entries.Single();
+        entry.Should().ContainKey("timestamp");
+        (entry["timestamp"] as string).Should().Contain("T"); // ISO 8601 round-trip
+    }
+
+    [Fact]
     public async Task Log_WithException_IncludesExceptionField()
     {
         await using TestLogPipeline pipeline = new();

@@ -184,4 +184,179 @@ public sealed class Sl4nTransportWorkerTests
         Func<Task> dispose = async () => await worker.DisposeAsync();
         await dispose.Should().NotThrowAsync();
     }
+
+    // ── Logging matrix (context-field filtering) ──────────────────────────────
+
+    private static async Task<Dictionary<string, object?>> RunSingle(
+        RawLogEvent evt, LoggingMatrix matrix)
+    {
+        Channel<RawLogEvent> channel = UnboundedChannel();
+        CapturingTransport transport = new();
+        Sl4nTransportWorker worker = new(channel.Reader, [transport], NoOpMasking(), matrix);
+
+        channel.Writer.TryWrite(evt);
+        channel.Writer.Complete();
+
+        await worker.StartAsync(CancellationToken.None);
+        await channel.Reader.Completion;
+        await worker.StopAsync(CancellationToken.None);
+
+        return transport.Entries.Single();
+    }
+
+    private static List<KeyValuePair<string, object?>> Scope(params (string, object?)[] fields) =>
+        fields.Select(f => KeyValuePair.Create(f.Item1, f.Item2)).ToList();
+
+    [Fact]
+    public async Task Worker_Matrix_FiltersScopeFields_ByLevel()
+    {
+        LoggingMatrix matrix = LoggingMatrix.Create(new Dictionary<string, string[]>
+        {
+            ["information"] = ["correlationId"],
+        });
+        RawLogEvent evt = new(LogLevel.Information, "test", "ok", null, null,
+            Scope(("correlationId", "req-001"), ("userId", "usr-42")));
+
+        Dictionary<string, object?> entry = await RunSingle(evt, matrix);
+
+        entry["correlationId"].Should().Be("req-001");
+        entry.Should().NotContainKey("userId"); // not whitelisted at information
+    }
+
+    [Fact]
+    public async Task Worker_Matrix_Wildcard_KeepsAllScopeFields()
+    {
+        LoggingMatrix matrix = LoggingMatrix.Create(new Dictionary<string, string[]>
+        {
+            ["default"] = ["correlationId"],
+            ["error"]   = ["*"],
+        });
+        RawLogEvent evt = new(LogLevel.Error, "test", "boom", null, null,
+            Scope(("correlationId", "req-001"), ("userId", "usr-42")));
+
+        Dictionary<string, object?> entry = await RunSingle(evt, matrix);
+
+        entry["correlationId"].Should().Be("req-001");
+        entry["userId"].Should().Be("usr-42");
+    }
+
+    [Fact]
+    public async Task Worker_Matrix_Default_AppliesToUnlistedLevel()
+    {
+        LoggingMatrix matrix = LoggingMatrix.Create(new Dictionary<string, string[]>
+        {
+            ["default"] = ["correlationId"],
+            ["error"]   = ["*"],
+        });
+        RawLogEvent evt = new(LogLevel.Warning, "test", "hmm", null, null,
+            Scope(("correlationId", "req-001"), ("userId", "usr-42")));
+
+        Dictionary<string, object?> entry = await RunSingle(evt, matrix);
+
+        entry["correlationId"].Should().Be("req-001");
+        entry.Should().NotContainKey("userId"); // warning falls back to default
+    }
+
+    [Fact]
+    public async Task Worker_Matrix_DoesNotFilter_StructuredState()
+    {
+        // information only whitelists correlationId — but per-call structured state is never filtered.
+        LoggingMatrix matrix = LoggingMatrix.Create(new Dictionary<string, string[]>
+        {
+            ["information"] = ["correlationId"],
+        });
+        KeyValuePair<string, object?>[] state =
+        [
+            KeyValuePair.Create<string, object?>("amount", 299.90m),
+            KeyValuePair.Create<string, object?>("{OriginalFormat}", "Charged {amount}"),
+        ];
+        RawLogEvent evt = new(LogLevel.Information, "test", "Charged 299.90", state, null,
+            Scope(("correlationId", "req-001"), ("userId", "usr-42")));
+
+        Dictionary<string, object?> entry = await RunSingle(evt, matrix);
+
+        entry["correlationId"].Should().Be("req-001"); // context: whitelisted
+        entry.Should().NotContainKey("userId");        // context: filtered
+        entry["amount"].Should().Be(299.90m);          // per-call state: always emitted
+    }
+
+    // ── Sanitization ──────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Worker_SanitizesMessage_ControlCharsAndAnsi()
+    {
+        RawLogEvent evt = new(LogLevel.Information, "test", "line1\nline2\x1B[31m!", null, null, null);
+
+        Dictionary<string, object?> entry = await RunSingle(evt, LoggingMatrix.Empty);
+
+        entry["message"].Should().Be("line1line2!");
+    }
+
+    [Fact]
+    public async Task Worker_SanitizesScopeStringValues()
+    {
+        RawLogEvent evt = new(LogLevel.Information, "test", "ok", null, null,
+            Scope(("correlationId", "req\n001")));
+
+        Dictionary<string, object?> entry = await RunSingle(evt, LoggingMatrix.Empty);
+
+        entry["correlationId"].Should().Be("req001");
+    }
+
+    // ── Transport failure isolation + stats ───────────────────────────────────
+
+    private sealed class ThrowingTransport : ITransport
+    {
+        public void Log(IReadOnlyDictionary<string, object?> entry) =>
+            throw new InvalidOperationException("transport boom");
+    }
+
+    [Fact]
+    public async Task Worker_IsolatesTransportFailure_OtherTransportsStillReceive()
+    {
+        Channel<RawLogEvent> channel = UnboundedChannel();
+        CapturingTransport healthy = new();
+        Sl4nStats stats = new();
+        Exception? captured = null;
+        string? failedName = null;
+
+        Sl4nTransportWorker worker = new(
+            channel.Reader, [new ThrowingTransport(), healthy], NoOpMasking(),
+            matrix: null, stats: stats,
+            onLogFailure: (ex, name) => { captured = ex; failedName = name; });
+
+        channel.Writer.TryWrite(SimpleEvent("hello"));
+        channel.Writer.Complete();
+
+        await worker.StartAsync(CancellationToken.None);
+        await channel.Reader.Completion;
+        await worker.StopAsync(CancellationToken.None);
+
+        healthy.Entries.Should().HaveCount(1);                 // failure of one didn't starve the other
+        captured.Should().BeOfType<InvalidOperationException>();
+        failedName.Should().Be(nameof(ThrowingTransport));
+        stats.Snapshot().TransportFailures.Should().Be(1);
+        stats.Snapshot().LogsProcessed.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Worker_Stats_CountLogsProcessed()
+    {
+        Channel<RawLogEvent> channel = UnboundedChannel();
+        Sl4nStats stats = new();
+        Sl4nTransportWorker worker = new(
+            channel.Reader, [new CapturingTransport()], NoOpMasking(), matrix: null, stats: stats);
+
+        channel.Writer.TryWrite(SimpleEvent("a"));
+        channel.Writer.TryWrite(SimpleEvent("b"));
+        channel.Writer.TryWrite(SimpleEvent("c"));
+        channel.Writer.Complete();
+
+        await worker.StartAsync(CancellationToken.None);
+        await channel.Reader.Completion;
+        await worker.StopAsync(CancellationToken.None);
+
+        stats.Snapshot().LogsProcessed.Should().Be(3);
+        stats.Snapshot().TransportFailures.Should().Be(0);
+    }
 }

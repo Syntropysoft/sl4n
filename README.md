@@ -59,8 +59,9 @@ The `correlationId` propagated automatically from the inbound HTTP header. The `
 
 | Package | Description |
 |---------|-------------|
-| `sl4n` | Core — masking, context propagation, async transport |
+| `sl4n` | Core — masking, context propagation, async transport, logging matrix, retention |
 | `sl4n.AspNetCore` | Middleware — extracts inbound context, opens MEL scope per request |
+| `sl4n.Testing` | `SpyTransport` — capture emitted entries and assert on them in tests |
 
 ---
 
@@ -111,6 +112,42 @@ HTTP request ──► Sl4nMiddleware
 
 ---
 
+## Console output
+
+Every entry carries an ISO-8601 `timestamp` captured at log time. Two console transports ship:
+
+- **`ConsoleTransport`** (default) — one JSON object per line, for machine ingestion.
+- **`ClassicConsoleTransport`** — human-readable `2026-06-20T… [INF] category: message key=value` for
+  local development. Swap it in after `AddSl4n`:
+
+```csharp
+builder.Services.AddSl4n(builder.Configuration.GetSection("sl4n"));
+builder.Services.UseClassicConsole();   // replaces the JSON console transport
+```
+
+Both implement `ITransport` — write your own for any backend (the Universal Adapter role).
+
+---
+
+## Durable buffering
+
+Wrap any transport in a `DurableFileTransport` to survive backend outages. It's a **buffer, not an
+archive**: in the happy path entries go straight to the inner transport and disk is untouched. When
+the inner transport throws, entries spool to a file and retry on later logs and on restart; once the
+backlog drains, the file is **deleted**. The spool only ever holds the undelivered backlog — no
+rotation, no rename, no cleanup to maintain.
+
+```csharp
+ITransport sink = new MyHttpTransport(/* … */);         // your real sink; may fail transiently
+var durable = new DurableFileTransport(sink, "buffer/spool.jsonl");
+services.UseTransport(durable);                          // register as your ITransport
+```
+
+A crash mid-outage is recovered on the next startup: the leftover spool is replayed to the inner
+transport when a fresh `DurableFileTransport` is constructed.
+
+---
+
 ## Default masking rules
 
 | Field pattern | Strategy | Example |
@@ -121,6 +158,85 @@ HTTP request ──► Sl4nMiddleware
 | `credit_card`, `card_number` | Last four | `************1234` |
 | `ssn`, `social_security` | Last four | `*****6789` |
 | `phone`, `mobile`, `tel` | Last four | `******4567` |
+
+### Custom rules & safety
+
+Custom rules are **appended** to the defaults (keep `enableDefaultRules` on) — matched by field name:
+
+```json
+// appsettings.json — inside "sl4n"
+"masking": {
+  "enableDefaultRules": true,
+  "regexTimeoutMs": 100,
+  "rules": [
+    { "pattern": "^(cvv|cvc|securityCode)$", "strategy": "FullMask" }
+  ]
+}
+```
+
+Reference `MaskKeys` instead of string literals to keep patterns out of secret scanners (Sonar S2068):
+
+```csharp
+cfg.Masking.Rules.Add(new MaskingRuleConfig
+{
+    Pattern  = MaskKeys.Pattern(MaskKeys.Token),  // ^(token|key|auth|jwt|bearer)$
+    Strategy = MaskingStrategy.FullMask,
+});
+```
+
+Guarantees:
+
+- **Non-string under a sensitive key → `[REDACTED]`.** An object, array, or number under a
+  sensitive-named field is redacted whole, never stringified — nested PII can't leak through.
+- **Masking never throws.** A custom-mask exception or a regex timeout redacts that one field
+  fail-secure and fires `OnMaskingError`; logging keeps working.
+- **ReDoS guard.** Custom-rule regexes run under `regexTimeoutMs` (default 100 ms). The built-in
+  defaults are linear, source-generated `[GeneratedRegex]` — not subject to the timeout.
+
+**Scope — by field name, never free text.** A value is masked because its *key* matches a rule, not
+because the string *looks* sensitive. Masking does **not** deep-walk nested object graphs — that
+would move a mountain of data on every log and penalize latency. Structure sensitive data as keyed
+fields; a nested object under a sensitive key is still redacted whole. This mirrors SyntropyLog's
+by-key spirit, kept allocation-light and AOT-safe for .NET.
+
+---
+
+## Logging matrix
+
+*"You declare what each log should carry"* — this is where. The **logging matrix** is a per-level
+whitelist of **context fields**: a field not whitelisted for a level never reaches a transport. The
+same request context emits different subsets at different levels — narrow at `information`, wide at
+`error` — reviewable as one config object instead of by grepping every log call.
+
+```json
+// appsettings.json — inside the "sl4n" section
+"loggingMatrix": {
+  "default":     ["correlationId"],
+  "information": ["correlationId", "userId", "operation"],
+  "error":       ["*"]
+}
+```
+
+```csharp
+// AOT path — the typed builder keys off LogLevel, so a "not-a-level" typo is a compile error
+cfg.LoggingMatrix = new MatrixBuilder()
+    .Default("correlationId")
+    .Level(LogLevel.Information, "correlationId", "userId", "operation")
+    .All(LogLevel.Error)
+    .Build();
+```
+
+| Key | Meaning |
+|-----|---------|
+| `default` | Applied to any level not listed explicitly |
+| `Trace` … `Critical` | Per-level whitelist — MEL level names, case-insensitive |
+| `["*"]` | Allow every context field at that level |
+
+**It filters context only.** The per-call fields you pass to
+`logger.LogInformation("Charged {Amount}", amount)` are always emitted (and masked) — the matrix
+governs only the auto-propagating scope you can't trim at each call site. Leave a field off a level's
+list to keep it out of that level; always define `default`. When no matrix is configured, every
+context field passes through (backward compatible).
 
 ---
 
@@ -164,6 +280,63 @@ using Sl4nScope scope = Sl4nContext.Push(
 // Or set individual fields
 Sl4nContext.Set("step", "payment");
 ```
+
+---
+
+## Reliability & observability
+
+Three safety properties hold on every log:
+
+- **Sanitization.** Control characters and ANSI escape sequences are stripped from the message and
+  field values before any transport sees them — a value can't inject a fake log line. (The exception
+  blob is left intact so stack-trace newlines survive.)
+- **Transport isolation.** If one transport throws, the others still receive the entry and the worker
+  keeps running. The failure is counted and surfaced via `OnLogFailure`.
+- **Masking never throws.** A custom-mask error or a regex timeout redacts that field fail-secure and
+  fires `OnMaskingError`.
+
+Runtime counters are exposed via `Sl4nStats` — the `getStats()` equivalent — resolvable from DI:
+
+```csharp
+Sl4nStatsSnapshot s = provider.GetRequiredService<Sl4nStats>().Snapshot();
+// s.LogsProcessed · s.TransportFailures · s.DroppedEntries · s.MaskingFailures
+```
+
+```csharp
+// wire the failure hooks on the AOT config path
+services.AddSl4n(cfg =>
+{
+    cfg.OnLogFailure           = (ex, transport) => Console.Error.WriteLine($"{transport}: {ex.Message}");
+    cfg.Masking.OnMaskingError = (ex, field)     => Console.Error.WriteLine($"mask {field}: {ex.Message}");
+});
+```
+
+---
+
+## Retention policies
+
+Declare named retention policies (compliance metadata), then tag the logs that must obey them — the
+.NET analog of SyntropyLog's `withRetention('SOX_AUDIT_TRAIL')`. The emitted entry carries
+`retention` / `retentionClass` / `retentionDays` so a downstream store can apply the right retention.
+
+```json
+// appsettings.json — inside "sl4n"
+"retentionPolicies": {
+  "SOX_AUDIT_TRAIL": { "days": 2555, "class": "SOX" },
+  "GDPR_STANDARD":   { "days": 365,  "class": "GDPR" }
+}
+```
+
+```csharp
+using (logger.BeginRetentionScope("SOX_AUDIT_TRAIL"))
+{
+    logger.LogInformation("Payment approved {Amount}", amount);
+    // → { …, "retention": "SOX_AUDIT_TRAIL", "retentionClass": "SOX", "retentionDays": 2555 }
+}
+```
+
+The tag rides a MEL scope, so every log in the call chain inherits it. Retention metadata **bypasses
+the logging matrix** — it's a structural compliance stamp, not user context.
 
 ---
 
@@ -221,6 +394,25 @@ It is the component that makes every log line correct, consistent, and safe befo
 **No network I/O at runtime.** sl4n does not contact any external URLs. The only output is what your transports produce.
 
 **No extra runtime dependencies.** The core package depends only on `Microsoft.Extensions.*` — already present in any ASP.NET Core application.
+
+---
+
+## Testing your code
+
+`sl4n.Testing` ships a `SpyTransport` that captures emitted entries — so you assert on exactly what
+would have shipped: levels, messages, context fields, and **masked** values.
+
+```csharp
+var spy = new SpyTransport();
+var services = new ServiceCollection();
+services.AddSl4n(cfg => cfg.Masking.EnableDefaultRules = true);
+services.UseSpyTransport(spy);           // capture entries instead of writing to the console
+
+// … exercise the code under test, then assert on what was emitted:
+spy.Entries[0]["Email"].Should().Be("j**n@example.com");   // masking really ran
+spy.AtLevel("error").Should().BeEmpty();
+spy.AnyMessageContains("information", "Order created").Should().BeTrue();
+```
 
 ---
 

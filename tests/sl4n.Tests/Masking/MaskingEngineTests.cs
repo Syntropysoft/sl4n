@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using FluentAssertions;
 using Xunit;
 
@@ -146,5 +147,102 @@ public sealed class MaskingEngineTests
 
         engineWithCustom.Apply(state).First().Value
             .Should().Be("[REDACTED]");
+    }
+
+    // ── Custom rules via config ─────────────────────────────────────────────────
+
+    private static IReadOnlyDictionary<string, object?> ApplyWith(
+        MaskingEngine engine, params (string Key, object? Value)[] fields) =>
+        engine.Apply(fields.Select(f => KeyValuePair.Create(f.Key, f.Value)))
+              .ToDictionary(kv => kv.Key, kv => kv.Value);
+
+    [Fact]
+    public void ConfigRule_CustomPattern_IsApplied()
+    {
+        MaskingEngine engine = MaskingEngine.Create(new MaskingConfig
+        {
+            EnableDefaultRules = false,
+            Rules = { new MaskingRuleConfig { Pattern = "^(cvv|cvc)$", Strategy = MaskingStrategy.FullMask } },
+        });
+
+        ApplyWith(engine, ("cvv", "123"))["cvv"].Should().Be("***");
+    }
+
+    [Fact]
+    public void ConfigRule_IsAppendedOnTopOfDefaults()
+    {
+        MaskingEngine engine = MaskingEngine.Create(new MaskingConfig
+        {
+            EnableDefaultRules = true,
+            Rules = { new MaskingRuleConfig { Pattern = "^internalId$", Strategy = MaskingStrategy.FullMask } },
+        });
+
+        IReadOnlyDictionary<string, object?> r = ApplyWith(engine,
+            ("email", "john@example.com"), ("internalId", "abc123"));
+
+        r["email"].Should().Be("j**n@example.com");        // default rule still applies
+        r["internalId"].Should().Be(new string('*', 6));   // custom rule applies too
+    }
+
+    [Fact]
+    public void ConfigRule_UsingMaskKeys_BuildsWorkingPattern()
+    {
+        MaskingEngine engine = MaskingEngine.Create(new MaskingConfig
+        {
+            EnableDefaultRules = false,
+            Rules = { new MaskingRuleConfig { Pattern = MaskKeys.Pattern(MaskKeys.Token), Strategy = MaskingStrategy.FullMask } },
+        });
+
+        ApplyWith(engine, ("jwt", "header.payload.sig"))["jwt"]
+            .Should().Be(new string('*', "header.payload.sig".Length));
+    }
+
+    // ── Non-string redaction ────────────────────────────────────────────────────
+
+    [Fact]
+    public void NonStringValue_UnderSensitiveKey_IsFullyRedacted()
+    {
+        // A nested object under a sensitive key must not leak — it is redacted, not stringified.
+        object nested = new Dictionary<string, object?> { ["number"] = "4111111111111234" };
+        Apply(("password", nested))["password"].Should().Be("[REDACTED]");
+        Apply(("token", 123456))["token"].Should().Be("[REDACTED]");
+    }
+
+    [Fact]
+    public void NonStringValue_UnderNonSensitiveKey_PassesThrough()
+    {
+        Apply(("amount", 299.90m))["amount"].Should().Be(299.90m);
+    }
+
+    // ── Silent observer — masking never throws ─────────────────────────────────
+
+    [Fact]
+    public void CustomMaskThatThrows_IsRedacted_AndReported()
+    {
+        Exception? captured = null;
+        string? capturedKey = null;
+        MaskingRule throwing = new(
+            MaskingPatterns.EmailField(),
+            MaskingStrategy.Custom,
+            _ => throw new InvalidOperationException("boom"));
+        MaskingEngine engine = new([throwing], (ex, key) => { captured = ex; capturedKey = key; });
+
+        ApplyWith(engine, ("email", "john@example.com"))["email"].Should().Be("[REDACTED]");
+        captured.Should().BeOfType<InvalidOperationException>();
+        capturedKey.Should().Be("email");
+    }
+
+    [Fact]
+    public void RegexTimeout_IsRedacted_AndReported()
+    {
+        // Catastrophic-backtracking pattern + a 1-tick timeout → the ReDoS guard trips deterministically.
+        Exception? captured = null;
+        Regex pathological = new("^(a+)+$", RegexOptions.None, TimeSpan.FromTicks(1));
+        MaskingEngine engine = new([new MaskingRule(pathological, MaskingStrategy.FullMask)],
+            (ex, _) => captured = ex);
+
+        string key = new string('a', 32) + "!";
+        ApplyWith(engine, (key, "value"))[key].Should().Be("[REDACTED]");
+        captured.Should().BeOfType<RegexMatchTimeoutException>();
     }
 }

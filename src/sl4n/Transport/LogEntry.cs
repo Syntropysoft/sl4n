@@ -10,6 +10,7 @@ internal readonly struct RawLogEvent
     internal readonly IEnumerable<KeyValuePair<string, object?>>? StructuredState;
     internal readonly Exception?                             Exception;
     internal readonly List<KeyValuePair<string, object?>>?   ScopeFields;
+    internal readonly DateTimeOffset                         Timestamp;
 
     internal RawLogEvent(
         LogLevel                                    level,
@@ -17,7 +18,8 @@ internal readonly struct RawLogEvent
         string                                      message,
         IEnumerable<KeyValuePair<string, object?>>? structuredState,
         Exception?                                  exception,
-        List<KeyValuePair<string, object?>>?        scopeFields)
+        List<KeyValuePair<string, object?>>?        scopeFields,
+        DateTimeOffset                              timestamp = default)
     {
         Level           = level;
         Category        = category;
@@ -25,5 +27,6 @@ internal readonly struct RawLogEvent
         StructuredState = structuredState;
         Exception       = exception;
         ScopeFields     = scopeFields;
+        Timestamp       = timestamp;
     }
 }

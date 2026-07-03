@@ -25,6 +25,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\sl4n\sl4n.csproj" />
     <ProjectReference Include="..\..\src\sl4n.AspNetCore\sl4n.AspNetCore.csproj" />
+    <ProjectReference Include="..\..\src\sl4n.Testing\sl4n.Testing.csproj" />
   </ItemGroup>
 
 </Project>
