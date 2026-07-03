@@ -122,6 +122,40 @@ HTTP request ──► Sl4nMiddleware
 | `ssn`, `social_security` | Last four | `*****6789` |
 | `phone`, `mobile`, `tel` | Last four | `******4567` |
 
+### Custom rules & safety
+
+Custom rules are **appended** to the defaults (keep `enableDefaultRules` on) — matched by field name:
+
+```json
+// appsettings.json — inside "sl4n"
+"masking": {
+  "enableDefaultRules": true,
+  "regexTimeoutMs": 100,
+  "rules": [
+    { "pattern": "^(cvv|cvc|securityCode)$", "strategy": "FullMask" }
+  ]
+}
+```
+
+Reference `MaskKeys` instead of string literals to keep patterns out of secret scanners (Sonar S2068):
+
+```csharp
+cfg.Masking.Rules.Add(new MaskingRuleConfig
+{
+    Pattern  = MaskKeys.Pattern(MaskKeys.Token),  // ^(token|key|auth|jwt|bearer)$
+    Strategy = MaskingStrategy.FullMask,
+});
+```
+
+Guarantees:
+
+- **Non-string under a sensitive key → `[REDACTED]`.** An object, array, or number under a
+  sensitive-named field is redacted whole, never stringified — nested PII can't leak through.
+- **Masking never throws.** A custom-mask exception or a regex timeout redacts that one field
+  fail-secure and fires `OnMaskingError`; logging keeps working.
+- **ReDoS guard.** Custom-rule regexes run under `regexTimeoutMs` (default 100 ms). The built-in
+  defaults are linear, source-generated `[GeneratedRegex]` — not subject to the timeout.
+
 ---
 
 ## Logging matrix

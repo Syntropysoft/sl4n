@@ -28,8 +28,12 @@ Baseline before this work: 81 tests green, `dotnet 10.0.300`, target `net8.0`, A
 ## Phased plan
 
 - [x] **Phase 1 — Logging Matrix** ✅ (engine + typed builder + worker filtering + DI + 11 tests + README) — 92 tests green, AOT-clean
-- [ ] **Phase 2 — Masking to parity** (custom rules via config, nested/deep walk, non-string redaction,
-      `maskEnum` equivalent, ReDoS timeout, `onMaskingError`)
+- [x] **Phase 2 — Masking to parity** ✅ (custom rules via config, non-string redaction, `MaskKeys`
+      = `maskEnum`, ReDoS timeout, `OnMaskingError` never-throw) — 99 tests green, AOT-clean.
+      **Deferred:** deep **nested** walk of dictionary values — coupled to `ConsoleTransport`, which
+      today serializes flat (a nested dict value would `ToString()` to garbage). Fold nested masking +
+      nested JSON serialization together into **Phase 4**. Func-based custom masks are supported by
+      constructing `MaskingRule` directly (config path is declarative pattern+strategy only).
 - [ ] **Phase 3 — Safety boundary** (sanitization of control chars/ANSI, `onLogFailure`, `getStats()`)
 - [ ] **Phase 4 — Transports** (classic/pretty console, durable transport, retention policies)
 - [ ] **Phase 5 — Distributed** (Kafka/Redis instrumentation helpers — adapter package)
