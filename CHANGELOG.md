@@ -4,6 +4,18 @@ All notable changes to **sl4n** are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html) and
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.4] — 2026-07-09
+
+Documentation only — **no API or behavior changes**.
+
+### Changed
+
+- README family line: sl4n is presented as the .NET member of the SyntropyLog family, sibling links
+  now point at the published packages only (npm / PyPI — not the repos), and the Python member
+  ([slpy](https://pypi.org/project/slpy-log/)) is referenced for the first time.
+
+[1.0.4]: https://github.com/Syntropysoft/sl4n/releases/tag/v1.0.4
+
 ## [1.0.3] — 2026-06-20
 
 Documentation only — **no API or behavior changes**.

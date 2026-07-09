@@ -7,9 +7,10 @@ NativeAOT-compatible.
 
 [![NuGet](https://img.shields.io/nuget/v/sl4n.svg)](https://www.nuget.org/packages/sl4n) ![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg) ![.NET 8+](https://img.shields.io/badge/.NET-8%2B-blue.svg) ![NativeAOT compatible](https://img.shields.io/badge/NativeAOT-compatible-brightgreen.svg)
 
-> **sl4n is the .NET counterpart of [SyntropyLog](https://github.com/Syntropysoft/SyntropyLog)** — the
-> Node.js / TypeScript observability framework (also on [npm as `syntropylog`](https://www.npmjs.com/package/syntropylog)).
-> Same concepts and declarative model, adapted idiomatically to .NET: it rides on
+> **sl4n is the .NET member of the SyntropyLog family** — the reference implementation is
+> [SyntropyLog](https://www.npmjs.com/package/syntropylog) for Node.js / TypeScript, and the same model
+> exists for Python as [slpy](https://pypi.org/project/slpy-log/). Same concepts everywhere — Logging
+> Matrix, masking by field name, retention, durable delivery — adapted idiomatically to .NET: it rides on
 > `Microsoft.Extensions.Logging` (you keep `ILogger<T>`) instead of a bespoke logger, is configured
 > through DI (`AddSl4n`) instead of a global `init()`, and needs **no native addon** — .NET already
 > compiles to native, so the whole pipeline is NativeAOT-safe.
