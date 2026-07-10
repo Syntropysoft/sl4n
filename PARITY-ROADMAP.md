@@ -63,6 +63,27 @@ Baseline before this work: 81 tests green, `dotnet 10.0.300`, target `net8.0`, A
 All six phases delivered. Optional follow-ups: dedicated `docs/` pages mirroring SyntropyLog;
 a `MaxBufferedEntries` cap on `DurableFileTransport` for very long outages (currently unbounded).
 
+## JS-parity backlog (source audit 2026-07-10, done while planning the JVM port)
+
+Verified against the JS README "What's in the box" inventory — these are real gaps in sl4n's code,
+listed here so they live in the roadmap like everything else:
+
+- [ ] **PackageTags honesty (priority)** — `sl4n.csproj` lists `opentelemetry` in `PackageTags`
+      but no OTel integration exists anywhere in the code. Honest-positioning rule: remove the tag,
+      or build the feature (an `ITransport` emitting to an OTLP logger, per the JS README's
+      "OpenTelemetry" pattern). Do not ship a keyword without the capability.
+- [ ] **W3C `traceparent`** — context middleware supports inbound/outbound maps + UUID autogen but
+      does not parse `traceparent`; JS `correlationIdMiddleware` does. (The JVM port plans it in
+      its Phase 6 — .NET shouldn't lag its younger sibling.)
+- [ ] **Always-on `audit` level** — JS has an audit level that bypasses level thresholds; sl4n only
+      has retention tagging. Evaluate an MEL-idiomatic equivalent (EventId- or scope-based).
+- [ ] **Hot reconfiguration** — no `IOptionsMonitor` wiring; MEL supports it natively. Evaluate
+      hot-changing level/matrix (JS has runtime reconfiguration; Logback gives the JVM port `scan`
+      for free).
+- [ ] **Masking fixture (stretch)** — sl4n's strategy-enum model predates the canonical `MaskSpec`;
+      it does NOT run the shared 17-case `mask-parity-cases.json` that JS/Python/Rust/JVM assert.
+      Migrating to `MaskSpec` would put the whole family on one correctness contract.
+
 Minor cleanups:
 - [x] License — set to **Apache-2.0** (Gabriel's call) across `sl4n.csproj` + `sl4n.Testing.csproj`.
 - [x] Repo URL fixed to `github.com/Syntropysoft/sl4n`.
