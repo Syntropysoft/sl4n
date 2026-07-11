@@ -245,4 +245,58 @@ public sealed class MaskingEngineTests
         ApplyWith(engine, (key, "value"))[key].Should().Be("[REDACTED]");
         captured.Should().BeOfType<RegexMatchTimeoutException>();
     }
+
+    // ── Decision cache (perf fix, 2026-07-11 — semantics must be identical) ────
+
+    [Fact]
+    public void Cache_RepeatCalls_MaskIdentically_RuleCachedNotValue()
+    {
+        MaskingEngine engine = MaskingEngine.Create(new MaskingConfig { EnableDefaultRules = true });
+
+        ApplyWith(engine, ("email", "john@example.com"))["email"].Should().Be("j**n@example.com");
+        ApplyWith(engine, ("email", "anna@example.com"))["email"].Should().Be("a**a@example.com");
+        ApplyWith(engine, ("name", "John"))["name"].Should().Be("John");
+        ApplyWith(engine, ("name", "Anna"))["name"].Should().Be("Anna");
+
+        engine.DecisionCacheSize.Should().Be(2); // email + name, one entry per key NAME
+    }
+
+    [Fact]
+    public void Cache_IsBounded_NewKeysStillMaskCorrectly_Uncached()
+    {
+        MaskingEngine engine = MaskingEngine.Create(new MaskingConfig { EnableDefaultRules = true });
+
+        for (int i = 0; i < MaskingEngine.DecisionCacheMax + 50; i++)
+            _ = ApplyWith(engine, ($"field_{i}", "v"));
+
+        engine.DecisionCacheSize.Should().Be(MaskingEngine.DecisionCacheMax);
+
+        // A brand-new sensitive key AFTER the cap still masks (pays the scan, isn't stored).
+        ApplyWith(engine, ("password", "hunter2"))["password"].Should().Be("*******");
+        engine.DecisionCacheSize.Should().Be(MaskingEngine.DecisionCacheMax);
+    }
+
+    [Fact]
+    public void Cache_RegexTimeout_IsTransient_AndNeverCached()
+    {
+        // A ReDoS timeout mid-scan must NOT poison the decision for that key: the failure is
+        // transient (fail-secure Redacted), so the key stays out of the cache while other
+        // keys keep caching. Same contract as the Java sibling. A 1-tick timeout trips on ANY
+        // evaluation of that rule (the guard checks the clock on entry, not only when
+        // backtracking) — which is exactly what makes this test deterministic.
+        Regex pathological = new("^(a+)+$", RegexOptions.None, TimeSpan.FromTicks(1));
+        MaskingEngine engine = new([
+            new MaskingRule(MaskingPatterns.EmailField(), MaskingStrategy.Email), // safe, no timeout
+            new MaskingRule(pathological, MaskingStrategy.FullMask),
+        ]);
+
+        string hostile = new string('a', 32) + "!";
+        ApplyWith(engine, (hostile, "value"))[hostile].Should().Be("[REDACTED]");
+        engine.DecisionCacheSize.Should().Be(0); // the timeout was not cached
+
+        // 'email' matches the safe FIRST rule — the pathological one is never consulted
+        // (first match wins), so this key caches normally.
+        ApplyWith(engine, ("email", "john@example.com"))["email"].Should().Be("j**n@example.com");
+        engine.DecisionCacheSize.Should().Be(1);
+    }
 }

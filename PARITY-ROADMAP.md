@@ -84,6 +84,17 @@ listed here so they live in the roadmap like everything else:
       it does NOT run the shared 17-case `mask-parity-cases.json` that JS/Python/Rust/JVM assert.
       Migrating to `MaskSpec` would put the whole family on one correctness contract.
 
+- [x] **Perf: per-key-name decision cache in masking** — DONE 2026-07-11 (family fix, found by
+      the Java port's JMH suite; Java 4,497→1,187 ns/op, JS 442→183, Python 5,576→1,697, all
+      same-day). sl4n was the least affected — `[GeneratedRegex]` defaults and no wide catch-all —
+      but custom config rules are runtime-interpreted regexes and their cost scaled linearly:
+      measured 235 ns/op (defaults) vs 642 ns/op (defaults + 8 custom). With the bounded
+      `ConcurrentDictionary` cache (cap 4096; `RegexMatchTimeoutException` is transient and NEVER
+      cached; rule set is immutable post-construction so no invalidation is needed): **75 / 79
+      ns/op** — masking cost no longer scales with the number of custom rules, which is exactly
+      the regulated-industry configuration (cuit/dni/iban/… stacked on top of the defaults).
+      140 tests green.
+
 Minor cleanups:
 - [x] License — set to **Apache-2.0** (Gabriel's call) across `sl4n.csproj` + `sl4n.Testing.csproj`.
 - [x] Repo URL fixed to `github.com/Syntropysoft/sl4n`.
