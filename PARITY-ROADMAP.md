@@ -63,6 +63,58 @@ Baseline before this work: 81 tests green, `dotnet 10.0.300`, target `net8.0`, A
 All six phases delivered. Optional follow-ups: dedicated `docs/` pages mirroring SyntropyLog;
 a `MaxBufferedEntries` cap on `DurableFileTransport` for very long outages (currently unbounded).
 
+---
+
+## Phase 7 — hardening backport (from SyntropyLog JS 1.4.0/1.4.1, 2026-07-14)
+
+The JS sibling shipped a hardening wave; these are the pieces that apply to .NET
+(ReDoS does NOT — sl4n already enforces a REAL 100 ms regex timeout by default,
+something V8 cannot do; and there is no native-addon fallback to observe).
+
+- [x] **7.1 Masking decision cache** — `MaskValue` re-scans every rule regex per key per
+      entry; JS got 2.4× (442→183 ns/op) caching the per-key-name DECISION (rule or none),
+      never the value. .NET is simpler: rules are immutable after `Create()` → no
+      invalidation path. `ConcurrentDictionary<string, MaskingRule?>` (engine is a shared
+      DI singleton), bounded at 4096 (past the cap: correct but uncached), a
+      `RegexMatchTimeoutException` mid-scan is NOT cached (transient), expose
+      `DecisionCacheSize` for diagnostics.
+- [x] **7.2 Durable outage observability** — `DurableFileTransport.TryForward` swallows the
+      inner failure (`catch { return false; }`): buffering IS the handling, but the operator
+      never learns an outage started, why, or that it recovered — and the worker can't see it
+      either (the durable eats the exception before per-transport isolation). Add optional
+      ctor callbacks, default null ⇒ behavior byte-identical: `onOutageStarted(Exception)`
+      fired ONCE per false→true backlog transition (JS 1.4.1 "report once, cached" lesson),
+      `onBacklogDrained(int delivered)` on full drain.
+- [x] **7.3 Poison spool line** — a crash mid-`Append` leaves a truncated JSON line;
+      `Deserialize` then throws inside `Drain()` on every subsequent `Log()` → the spool is
+      wedged forever. Skip unparseable lines (they were never a complete entry), report via
+      an optional `onCorruptLine(Exception, string)` callback.
+- [x] **7.4 CI executes the AOT claim** — ci.yml only builds+tests JIT, and only on `main`
+      (develop never runs CI!). Add develop to triggers, and an `aot-smoke` job: publish a
+      tiny console app with `PublishAot=true`, RUN the binary, assert masked output
+      (password `[REDACTED]`, no cleartext PII). Compiling proves it links; this proves it
+      runs. Mirrors the JS `alpine-smoke` job.
+- [x] **7.5 ★ PII LEAK: template-interpolated values land in `message` unmasked** — found
+      while building 7.4. `Sl4nLogger` stores `formatter(state, exception)` (MEL's
+      pre-formatted message, RAW values); the worker masks only `StructuredState`. So the
+      README's own quick start (`"Card charged {Amount} for {Email}"`) emits the cleartext
+      email inside `message` next to a masked `Email` field — looks masked, isn't. The .NET
+      twin of JS 1.2.0's message-first routing fix. The README output IS the contract; fix
+      the code to match it: when any state key has a masking rule (a cached decision — 7.1
+      synergy), re-render `message` from `{OriginalFormat}` using the MASKED values
+      (AOT-safe token substitution; `{{`/`}}` literals honored; format specifiers lose
+      fidelity only on re-rendered = masked entries). No state key with a rule ⇒ message is
+      byte-identical to MEL's (common case, zero cost beyond the cached lookups).
+- [x] **7.6 ★ Double-dispose crash on clean shutdown** — found by RUNNING the 7.4 smoke
+      (before AOT even entered the picture): the worker is registered both as a singleton
+      and as its own IHostedService — two DI descriptors, one instance — so the
+      ServiceProvider disposes it twice, and the second `DisposeAsync()` hit the disposed
+      CTS → `ObjectDisposedException` on every clean host shutdown. `DisposeAsync` is now
+      idempotent. Exactly why the smoke exists: executed, not claimed.
+
+All of Phase 7 delivered — 148 tests green, AOT smoke passes (JIT-verified locally; the
+CI `aot-smoke` job publishes with PublishAot on linux-x64 and executes the binary).
+
 Minor cleanups:
 - [x] License — set to **Apache-2.0** (Gabriel's call) across `sl4n.csproj` + `sl4n.Testing.csproj`.
 - [x] Repo URL fixed to `github.com/Syntropysoft/sl4n`.

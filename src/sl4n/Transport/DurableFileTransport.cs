@@ -17,13 +17,33 @@ public sealed class DurableFileTransport : ITransport
     private readonly string     _spoolPath;
     private readonly object     _gate = new();
     private bool                _hasBacklog;
+    private bool                _corruptReported;
+
+    private readonly Action<Exception>?         _onOutageStarted;
+    private readonly Action<int>?               _onBacklogDrained;
+    private readonly Action<Exception, string>? _onCorruptLine;
 
     /// <param name="inner">The real sink (e.g. an HTTP/DB transport) that may fail transiently.</param>
     /// <param name="spoolPath">File used to buffer the undelivered backlog during an outage.</param>
-    public DurableFileTransport(ITransport inner, string spoolPath)
+    /// <param name="onOutageStarted">Fired ONCE per outage — when a live delivery first fails and
+    /// buffering begins — with the inner transport's exception. Buffering is the failure handling
+    /// either way; this makes the outage (and its cause) observable instead of silent.</param>
+    /// <param name="onBacklogDrained">Fired when the backlog fully drains (spool deleted), with the
+    /// number of entries delivered by that drain.</param>
+    /// <param name="onCorruptLine">Fired (once per outage episode) when an unparseable spool line —
+    /// e.g. truncated by a crash mid-append — is skipped so the spool cannot stay wedged.</param>
+    public DurableFileTransport(
+        ITransport                  inner,
+        string                      spoolPath,
+        Action<Exception>?          onOutageStarted  = null,
+        Action<int>?                onBacklogDrained = null,
+        Action<Exception, string>?  onCorruptLine    = null)
     {
-        _inner     = inner;
-        _spoolPath = spoolPath;
+        _inner            = inner;
+        _spoolPath        = spoolPath;
+        _onOutageStarted  = onOutageStarted;
+        _onBacklogDrained = onBacklogDrained;
+        _onCorruptLine    = onCorruptLine;
         Recover();
     }
 
@@ -34,8 +54,9 @@ public sealed class DurableFileTransport : ITransport
         {
             if (!_hasBacklog)
             {
-                if (TryForward(entry)) return;   // happy path — disk untouched
-                _hasBacklog = true;              // sink just went down → begin buffering
+                if (TryForward(entry, out Exception? error)) return;   // happy path — disk untouched
+                _hasBacklog = true;                                    // sink just went down → begin buffering
+                _onOutageStarted?.Invoke(error!);                      // once per transition, not per entry
                 Append(Serialize(entry));
                 return;
             }
@@ -53,10 +74,10 @@ public sealed class DurableFileTransport : ITransport
         Drain();
     }
 
-    private bool TryForward(IReadOnlyDictionary<string, object?> entry)
+    private bool TryForward(IReadOnlyDictionary<string, object?> entry, out Exception? error)
     {
-        try { _inner.Log(entry); return true; }
-        catch { return false; }   // buffering IS the failure handling — swallow and spool
+        try { _inner.Log(entry); error = null; return true; }
+        catch (Exception ex) { error = ex; return false; }   // buffering IS the failure handling — swallow and spool
     }
 
     // Delivers spooled entries in order, stopping at the first failure. Deletes the file when the
@@ -71,7 +92,22 @@ public sealed class DurableFileTransport : ITransport
         foreach (string line in File.ReadLines(_spoolPath))
         {
             if (remainder is not null) { remainder.Add(line); continue; }
-            if (TryForward(Deserialize(line))) { delivered++; continue; }
+
+            Dictionary<string, object?> entry;
+            try
+            {
+                entry = Deserialize(line);
+            }
+            catch (Exception ex)
+            {
+                // A crash mid-append leaves a truncated line — it was never a complete entry.
+                // Skipping (reported once per episode) is the only way the spool can't stay
+                // wedged forever on the same poison line. It is dropped at the next rewrite/delete.
+                if (!_corruptReported) { _corruptReported = true; _onCorruptLine?.Invoke(ex, line); }
+                continue;
+            }
+
+            if (TryForward(entry, out _)) { delivered++; continue; }
             if (delivered == 0) return;                       // still down, no progress → file intact (O(1))
             remainder = new List<string> { line };            // partial progress → collect the rest
         }
@@ -80,6 +116,8 @@ public sealed class DurableFileTransport : ITransport
         {
             File.Delete(_spoolPath);   // fully drained → the spool is gone until the next outage
             _hasBacklog = false;
+            _corruptReported = false;
+            if (delivered > 0) _onBacklogDrained?.Invoke(delivered);
         }
         else
         {
