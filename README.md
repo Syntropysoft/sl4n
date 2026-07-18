@@ -1,15 +1,26 @@
-# sl4n — Syntropy Log for .NET
+<p align="center">
+  <img src="https://syntropysoft.com/syntropylog-logo.png" alt="SyntropyLog Logo" width="170"/>
+</p>
 
-**The declarative observability framework for .NET — built on Microsoft.Extensions.Logging.**
-Correlation IDs, PII masking, per-level field control and retention — declared **once** and enforced on
-every log, before it reaches any transport. Fail-safe by design (logging can never crash your app) and
-NativeAOT-compatible.
+<h1 align="center">sl4n</h1>
 
-[![NuGet](https://img.shields.io/nuget/v/sl4n.svg)](https://www.nuget.org/packages/sl4n) ![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg) ![.NET 8+](https://img.shields.io/badge/.NET-8%2B-blue.svg) ![NativeAOT compatible](https://img.shields.io/badge/NativeAOT-compatible-brightgreen.svg)
+<p align="center">
+  <strong>The declarative observability framework for .NET — built on Microsoft.Extensions.Logging.</strong>
+  <br />
+  Correlation IDs, PII masking, per-level field control and retention — declared <strong>once</strong> and enforced on every log, before it reaches any transport. <strong>Fail-safe by design:</strong> logging can never crash your app. NativeAOT-compatible.
+</p>
 
-> **sl4n is the .NET counterpart of [SyntropyLog](https://github.com/Syntropysoft/SyntropyLog)** — the
-> Node.js / TypeScript observability framework (also on [npm as `syntropylog`](https://www.npmjs.com/package/syntropylog)).
-> Same concepts and declarative model, adapted idiomatically to .NET: it rides on
+<p align="center">
+  <a href="https://www.nuget.org/packages/sl4n"><img src="https://img.shields.io/nuget/v/sl4n.svg" alt="NuGet"></a>
+  <img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License: Apache 2.0">
+  <img src="https://img.shields.io/badge/.NET-8%2B-blue.svg" alt=".NET 8+">
+  <img src="https://img.shields.io/badge/NativeAOT-compatible-brightgreen.svg" alt="NativeAOT compatible">
+</p>
+
+> **sl4n is the .NET member of the SyntropyLog family** — the reference implementation is
+> [SyntropyLog](https://www.npmjs.com/package/syntropylog) for Node.js / TypeScript, and the same model
+> exists for Python as [slpy](https://pypi.org/project/slpy-log/). Same concepts everywhere — Logging
+> Matrix, masking by field name, retention, durable delivery — adapted idiomatically to .NET: it rides on
 > `Microsoft.Extensions.Logging` (you keep `ILogger<T>`) instead of a bespoke logger, is configured
 > through DI (`AddSl4n`) instead of a global `init()`, and needs **no native addon** — .NET already
 > compiles to native, so the whole pipeline is NativeAOT-safe.

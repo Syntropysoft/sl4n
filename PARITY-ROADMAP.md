@@ -63,6 +63,38 @@ Baseline before this work: 81 tests green, `dotnet 10.0.300`, target `net8.0`, A
 All six phases delivered. Optional follow-ups: dedicated `docs/` pages mirroring SyntropyLog;
 a `MaxBufferedEntries` cap on `DurableFileTransport` for very long outages (currently unbounded).
 
+## JS-parity backlog (source audit 2026-07-10, done while planning the JVM port)
+
+Verified against the JS README "What's in the box" inventory — these are real gaps in sl4n's code,
+listed here so they live in the roadmap like everything else:
+
+- [ ] **PackageTags honesty (priority)** — `sl4n.csproj` lists `opentelemetry` in `PackageTags`
+      but no OTel integration exists anywhere in the code. Honest-positioning rule: remove the tag,
+      or build the feature (an `ITransport` emitting to an OTLP logger, per the JS README's
+      "OpenTelemetry" pattern). Do not ship a keyword without the capability.
+- [ ] **W3C `traceparent`** — context middleware supports inbound/outbound maps + UUID autogen but
+      does not parse `traceparent`; JS `correlationIdMiddleware` does. (The JVM port plans it in
+      its Phase 6 — .NET shouldn't lag its younger sibling.)
+- [ ] **Always-on `audit` level** — JS has an audit level that bypasses level thresholds; sl4n only
+      has retention tagging. Evaluate an MEL-idiomatic equivalent (EventId- or scope-based).
+- [ ] **Hot reconfiguration** — no `IOptionsMonitor` wiring; MEL supports it natively. Evaluate
+      hot-changing level/matrix (JS has runtime reconfiguration; Logback gives the JVM port `scan`
+      for free).
+- [ ] **Masking fixture (stretch)** — sl4n's strategy-enum model predates the canonical `MaskSpec`;
+      it does NOT run the shared 17-case `mask-parity-cases.json` that JS/Python/Rust/JVM assert.
+      Migrating to `MaskSpec` would put the whole family on one correctness contract.
+
+- [x] **Perf: per-key-name decision cache in masking** — DONE 2026-07-11 (family fix, found by
+      the Java port's JMH suite; Java 4,497→1,187 ns/op, JS 442→183, Python 5,576→1,697, all
+      same-day). sl4n was the least affected — `[GeneratedRegex]` defaults and no wide catch-all —
+      but custom config rules are runtime-interpreted regexes and their cost scaled linearly:
+      measured 235 ns/op (defaults) vs 642 ns/op (defaults + 8 custom). With the bounded
+      `ConcurrentDictionary` cache (cap 4096; `RegexMatchTimeoutException` is transient and NEVER
+      cached; rule set is immutable post-construction so no invalidation is needed): **75 / 79
+      ns/op** — masking cost no longer scales with the number of custom rules, which is exactly
+      the regulated-industry configuration (cuit/dni/iban/… stacked on top of the defaults).
+      140 tests green.
+
 ---
 
 ## Phase 7 — hardening backport (from SyntropyLog JS 1.4.0/1.4.1, 2026-07-14)
@@ -71,13 +103,13 @@ The JS sibling shipped a hardening wave; these are the pieces that apply to .NET
 (ReDoS does NOT — sl4n already enforces a REAL 100 ms regex timeout by default,
 something V8 cannot do; and there is no native-addon fallback to observe).
 
-- [x] **7.1 Masking decision cache** — `MaskValue` re-scans every rule regex per key per
-      entry; JS got 2.4× (442→183 ns/op) caching the per-key-name DECISION (rule or none),
-      never the value. .NET is simpler: rules are immutable after `Create()` → no
-      invalidation path. `ConcurrentDictionary<string, MaskingRule?>` (engine is a shared
-      DI singleton), bounded at 4096 (past the cap: correct but uncached), a
-      `RegexMatchTimeoutException` mid-scan is NOT cached (transient), expose
-      `DecisionCacheSize` for diagnostics.
+- [x] **7.1 Masking decision cache** — RESOLVED IN MERGE: the same family fix was implemented
+      independently upstream (2026-07-11, benchmarked 642→79 ns/op — see the backlog entry
+      above) while this branch built its own. The merge kept the upstream implementation
+      (`FindMatchingRule`/`ScanRules`, internal `DecisionCacheMax`, its test suite) and
+      grafted this branch's unique addition on top: public **`HasRuleFor(key)`** — a cached
+      decision lookup the worker needs for 7.5's message re-render (timeout ⇒ `true`,
+      fail-secure).
 - [x] **7.2 Durable outage observability** — `DurableFileTransport.TryForward` swallows the
       inner failure (`catch { return false; }`): buffering IS the handling, but the operator
       never learns an outage started, why, or that it recovered — and the worker can't see it
@@ -112,8 +144,8 @@ something V8 cannot do; and there is no native-addon fallback to observe).
       CTS → `ObjectDisposedException` on every clean host shutdown. `DisposeAsync` is now
       idempotent. Exactly why the smoke exists: executed, not claimed.
 
-All of Phase 7 delivered — 148 tests green, AOT smoke passes (JIT-verified locally; the
-CI `aot-smoke` job publishes with PublishAot on linux-x64 and executes the binary).
+All of Phase 7 delivered — AOT smoke passes (JIT-verified locally; the CI `aot-smoke`
+job publishes with PublishAot on linux-x64 and executes the binary).
 
 Minor cleanups:
 - [x] License — set to **Apache-2.0** (Gabriel's call) across `sl4n.csproj` + `sl4n.Testing.csproj`.

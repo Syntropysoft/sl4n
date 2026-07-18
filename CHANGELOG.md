@@ -4,6 +4,37 @@ All notable changes to **sl4n** are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html) and
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Performance
+
+- **Masking cost no longer scales with the number of custom rules.** Every key paid the full
+  rule scan per log — cheap for the `[GeneratedRegex]` defaults (235 ns/op for a 3-field entry),
+  but custom config rules are runtime-interpreted regexes and each one added linear cost
+  (642 ns/op with 8 custom rules — the typical regulated-industry setup: cuit, dni, iban, …).
+  The engine now caches the *decision* per key name (matched rule or "no rule"), never the
+  value: **75 ns/op with defaults, 79 ns/op with defaults + 8 custom** — 3.1x and 8.1x.
+  Safety properties: bounded at 4096 entries (hostile payloads generating unique key names
+  cannot grow memory — past the cap, new keys still mask correctly, uncached); a
+  `RegexMatchTimeoutException` during the scan is transient and is **never cached** (the
+  fail-secure `[REDACTED]` behavior is unchanged); the rule set is immutable after
+  construction, so the cache never needs invalidation. Masked output is byte-for-byte
+  identical — 140 tests green. Family fix: found by the Java port's JMH suite
+  (4,497→1,187 ns/op there), landed in SyntropyLog (JS, 442→183) and slpy (5,576→1,697)
+  the same day.
+
+## [1.0.4] — 2026-07-09
+
+Documentation only — **no API or behavior changes**.
+
+### Changed
+
+- README family line: sl4n is presented as the .NET member of the SyntropyLog family, sibling links
+  now point at the published packages only (npm / PyPI — not the repos), and the Python member
+  ([slpy](https://pypi.org/project/slpy-log/)) is referenced for the first time.
+
+[1.0.4]: https://github.com/Syntropysoft/sl4n/releases/tag/v1.0.4
+
 ## [1.0.3] — 2026-06-20
 
 Documentation only — **no API or behavior changes**.
