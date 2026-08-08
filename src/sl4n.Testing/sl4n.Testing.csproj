@@ -8,8 +8,8 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
 
     <PackageId>sl4n.Testing</PackageId>
-    <Version>1.0.4</Version>
-    <PackageReleaseNotes>1.0.3 — documentation fix only (remove the README logo). No API or behavior changes. See CHANGELOG.md.</PackageReleaseNotes>
+    <Version>1.0.5</Version>
+    <PackageReleaseNotes>1.0.5 - fixes: the log message no longer leaks masked values (re-rendered from masked state), and DisposeAsync is idempotent so a clean host shutdown no longer throws. Plus durable-transport outage callbacks, a poison-spool-line fix, and masking that no longer slows with custom rules. See CHANGELOG.md.</PackageReleaseNotes>
     <Authors>Syntropy</Authors>
     <Company>Syntropy</Company>
     <Product>sl4n</Product>

@@ -6,6 +6,38 @@ All notable changes to **sl4n** are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [1.0.5] — 2026-08-08
+
+Phase 7 hardening: two security/correctness fixes (message masking + clean shutdown), durable-transport
+observability, and masking performance. Backport from the SyntropyLog JS 1.4.0/1.4.1 family — all of it
+landed after v1.0.4 was cut, so **v1.0.4 shipped without these fixes**.
+
+### Fixed
+
+- **PII leak inside the log message (7.5).** MEL pre-formats the message with RAW values, so
+  `log.Info("Card charged {Amount} for {Email}", …)` emitted the cleartext email inside `message`
+  right next to a masked `Email` field — it *looked* masked but wasn't. The worker now **re-renders
+  the message from the masked values** whenever a state key has a masking rule (AOT-safe,
+  culture-invariant token substitution: `{{ }}` escapes honored, unknown tokens verbatim,
+  `null → "(null)"`). Entries with no maskable key keep MEL's formatting byte-for-byte. The .NET
+  twin of JS 1.2.0's message-first routing fix.
+- **Double-dispose crash on host shutdown (7.6).** `Sl4nTransportWorker` is registered as a singleton
+  AND as its own `IHostedService` (two DI descriptors, one instance), so the provider disposed it
+  twice and every clean host shutdown threw `ObjectDisposedException` on the CTS. `DisposeAsync` is
+  now idempotent. Found by running the new AOT smoke.
+- **Poison spool line wedged the durable drain (7.3).** A crash mid-append left a truncated JSON line
+  that made `DurableFileTransport.Drain()` fail on every subsequent `Log()` (same parse error each
+  time). Unparseable lines are now skipped and reported once per episode via `onCorruptLine`.
+
+### Added
+
+- **Durable-outage observability (7.2).** `DurableFileTransport` swallowed the inner transport failure
+  invisibly. Optional constructor callbacks (default `null` = behavior identical): `onOutageStarted(ex)`
+  once per outage transition, `onBacklogDrained(count)` on full drain.
+- **AOT smoke in CI (7.4).** `ci.yml` now runs on `develop` and publishes `tests/sl4n.AotSmoke` with
+  `PublishAot` on linux-x64, **executes the binary**, and asserts the emitted JSON (message included)
+  is masked. Compiling proved it links; this proves it runs.
+
 ### Performance
 
 - **Masking cost no longer scales with the number of custom rules.** Every key paid the full
@@ -22,6 +54,8 @@ All notable changes to **sl4n** are documented here. This project adheres to
   identical — 140 tests green. Family fix: found by the Java port's JMH suite
   (4,497→1,187 ns/op there), landed in SyntropyLog (JS, 442→183) and slpy (5,576→1,697)
   the same day.
+
+[1.0.5]: https://github.com/Syntropysoft/sl4n/releases/tag/v1.0.5
 
 ## [1.0.4] — 2026-07-09
 

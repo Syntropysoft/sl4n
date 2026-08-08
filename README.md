@@ -27,6 +27,22 @@
 
 ---
 
+## What's new in 1.0.5
+
+Two correctness fixes that make **1.0.4 worth skipping** — upgrade if you're on it. Full detail in
+[CHANGELOG.md](./CHANGELOG.md).
+
+- **Log message no longer leaks masked values.** MEL pre-formats the message with raw values, so an
+  interpolated PII field (`log.Info("… {Email}", email)`) used to sit in cleartext inside `message`
+  next to the masked `Email` field. The worker now re-renders the message from the masked values.
+- **No more crash on host shutdown.** The transport worker (registered as singleton + `IHostedService`)
+  was disposed twice by the DI container, throwing `ObjectDisposedException` on every clean shutdown.
+  `DisposeAsync` is now idempotent.
+- Plus: durable-transport outage callbacks, a poison-spool-line fix, and masking that no longer slows
+  down as you add custom rules.
+
+---
+
 ## Quick start
 
 ```bash
