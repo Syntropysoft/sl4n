@@ -6,6 +6,20 @@ All notable changes to **sl4n** are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [1.0.6] — 2026-08-08
+
+Documentation only — **no API or behavior changes**. Ship the 1.0.5 fixes with a NuGet-safe README.
+
+### Fixed
+
+- **README no longer renders broken on NuGet.** A centered HTML header (`<p align="center">` + a
+  `syntropysoft.com` logo `<img width>`) had crept back onto `develop` and shipped in 1.0.5 — NuGet
+  blocks that image host and escapes `<img width>` to raw text (the exact breakage 1.0.3 removed the
+  logo for). The header is now plain Markdown (heading + shields.io badges), rendering correctly on
+  both NuGet and GitHub.
+
+[1.0.6]: https://github.com/Syntropysoft/sl4n/releases/tag/v1.0.6
+
 ## [1.0.5] — 2026-08-08
 
 Phase 7 hardening: two security/correctness fixes (message masking + clean shutdown), durable-transport

@@ -1,21 +1,11 @@
-<p align="center">
-  <img src="https://syntropysoft.com/syntropylog-logo.png" alt="SyntropyLog Logo" width="170"/>
-</p>
+# sl4n — Syntropy Log for .NET
 
-<h1 align="center">sl4n</h1>
+**The declarative observability framework for .NET — built on Microsoft.Extensions.Logging.**
+Correlation IDs, PII masking, per-level field control and retention — declared **once** and enforced on
+every log, before it reaches any transport. Fail-safe by design (logging can never crash your app) and
+NativeAOT-compatible.
 
-<p align="center">
-  <strong>The declarative observability framework for .NET — built on Microsoft.Extensions.Logging.</strong>
-  <br />
-  Correlation IDs, PII masking, per-level field control and retention — declared <strong>once</strong> and enforced on every log, before it reaches any transport. <strong>Fail-safe by design:</strong> logging can never crash your app. NativeAOT-compatible.
-</p>
-
-<p align="center">
-  <a href="https://www.nuget.org/packages/sl4n"><img src="https://img.shields.io/nuget/v/sl4n.svg" alt="NuGet"></a>
-  <img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License: Apache 2.0">
-  <img src="https://img.shields.io/badge/.NET-8%2B-blue.svg" alt=".NET 8+">
-  <img src="https://img.shields.io/badge/NativeAOT-compatible-brightgreen.svg" alt="NativeAOT compatible">
-</p>
+[![NuGet](https://img.shields.io/nuget/v/sl4n.svg)](https://www.nuget.org/packages/sl4n) ![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg) ![.NET 8+](https://img.shields.io/badge/.NET-8%2B-blue.svg) ![NativeAOT compatible](https://img.shields.io/badge/NativeAOT-compatible-brightgreen.svg)
 
 > **sl4n is the .NET member of the SyntropyLog family** — the reference implementation is
 > [SyntropyLog](https://www.npmjs.com/package/syntropylog) for Node.js / TypeScript, and the same model
