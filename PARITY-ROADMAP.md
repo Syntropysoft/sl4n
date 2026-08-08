@@ -25,6 +25,25 @@ Baseline before this work: 81 tests green, `dotnet 10.0.300`, target `net8.0`, A
 
 ---
 
+## Backport analysis — SyntropyLog 1.4.1 / 1.4.2 (native + masking fixes)
+
+Four fixes that shipped in SyntropyLog (JS) 1.4.1/1.4.2 were analysed against sl4n (2026-08-08).
+**All four are N/A** — sl4n's architecture avoids each bug class by design, so there is nothing to
+port. Recorded here so the next person doesn't wonder whether they were missed.
+
+| SyntropyLog (JS) fix | sl4n | Why |
+| :-- | :-- | :-- |
+| **UTF-8 panic** in the native `truncate` (a byte-index slice split a multi-byte char → process `SIGABRT`, not catchable from JS) | N/A | No Rust addon. C# does no byte-index truncation of values; no `SIGABRT` path exists. |
+| **Masking mutated the caller's object** (the JS engine wrote redactions back in place, corrupting nested caller objects) | N/A | `MaskingEngine.Apply` is a non-mutating LINQ projection (`state.Select(...)` → a new sequence); masking is flat, with no deep-walk. |
+| **Cross-tenant PII leak** from a process-global native config (`OnceCell`) | N/A | DI, not a global singleton; `MaskingEngine.Create` is a per-instance factory — no shared native config. |
+| **Native path fed a serialized string to object-consuming transports** (durable audit / OTLP / adapters silently got a string they couldn't route or persist) | N/A | Object-based pipeline end to end: `ITransport.Log(IReadOnlyDictionary)` — the worker hands the dict to every transport, which serializes itself. There is no string fast-path to break. |
+
+Note the irony of #4: it makes the JS **native path** deliver each transport the shape it needs
+(string for console, object for adapters) — which is exactly what sl4n's worker already does. sl4n was
+born with that seam in the right place.
+
+---
+
 ## Phased plan
 
 - [x] **Phase 1 — Logging Matrix** ✅ (engine + typed builder + worker filtering + DI + 11 tests + README) — 92 tests green, AOT-clean
