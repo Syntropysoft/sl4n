@@ -8,6 +8,7 @@
     <Project Path="src/sl4n/sl4n.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/sl4n.AotSmoke/sl4n.AotSmoke.csproj" />
     <Project Path="tests/sl4n.Tests/sl4n.Tests.csproj" />
   </Folder>
 </Solution>

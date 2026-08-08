@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text;
 using System.Threading.Channels;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -53,11 +55,19 @@ public sealed class Sl4nTransportWorker : IHostedService, IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        // Idempotent: the worker is registered both as a singleton and as its own
+        // IHostedService (two descriptors, one instance), so the ServiceProvider disposes
+        // it twice — the second pass must not touch the already-disposed CTS. Found by
+        // the AOT smoke: a clean host shutdown crashed with ObjectDisposedException.
+        if (_disposed) return;
+        _disposed = true;
         _cts.Cancel();
         try { await _executeTask.ConfigureAwait(false); }
         catch (OperationCanceledException) { }
         _cts.Dispose();
     }
+
+    private bool _disposed;
 
     private async Task RunAsync(CancellationToken cancellationToken)
     {
@@ -137,15 +147,71 @@ public sealed class Sl4nTransportWorker : IHostedService, IAsyncDisposable
         }
 
         if (e.StructuredState is not null)
+        {
+            string? originalFormat = null;
+            bool maskable = false;
             foreach (KeyValuePair<string, object?> kv in _masking.Apply(e.StructuredState))
             {
-                if (kv.Key == "{OriginalFormat}") continue;
+                if (kv.Key == "{OriginalFormat}") { originalFormat = kv.Value as string; continue; }
                 _dict[kv.Key] = Sanitize(kv.Value);
+                if (!maskable && _masking.HasRuleFor(kv.Key)) maskable = true;
             }
+
+            // MEL pre-formats the message with RAW values (Sl4nLogger stores formatter(state)),
+            // so a template like "charged {Email}" would leak in `message` the very value the
+            // Email field masks. When any state key is maskable, re-render the message from the
+            // MASKED values — the README quick start is the contract. Re-rendering loses custom
+            // format specifiers on these entries (honesty over fidelity); entries with no
+            // maskable key keep MEL's exact formatting, byte for byte.
+            if (maskable && originalFormat is not null)
+                _dict["message"] = Sanitizer.Clean(RenderTemplate(originalFormat, _dict));
+        }
 
         // Exception blob is left intact — its newlines carry the stack trace.
         if (e.Exception is not null)
             _dict["exception"] = e.Exception.ToString();
+    }
+
+    // Re-renders a MEL message template using the (already masked + sanitized) dict values.
+    // AOT-safe token substitution: "{Name[,align][:format]}" → dict["Name"], "{{"/"}}" are
+    // literal braces (MEL escaping), unknown tokens are left verbatim, null renders "(null)".
+    private static string RenderTemplate(string format, IReadOnlyDictionary<string, object?> values)
+    {
+        StringBuilder sb = new(format.Length + 16);
+        for (int i = 0; i < format.Length; i++)
+        {
+            char c = format[i];
+            if (c == '{')
+            {
+                if (i + 1 < format.Length && format[i + 1] == '{') { sb.Append('{'); i++; continue; }
+                int end = format.IndexOf('}', i + 1);
+                if (end < 0) { sb.Append(format, i, format.Length - i); break; }
+                string token = format.Substring(i + 1, end - i - 1);
+                int cut = token.IndexOfAny([',', ':']);
+                string name = cut < 0 ? token : token[..cut];
+                if (values.TryGetValue(name, out object? v))
+                    sb.Append(v switch
+                    {
+                        null => "(null)",                // MEL renders null as "(null)"
+                        // Invariant, like MEL's template formatter — a masked message must not
+                        // change shape with the server's locale (299.9 vs "299,9").
+                        IFormattable f => f.ToString(null, CultureInfo.InvariantCulture),
+                        _ => v.ToString(),
+                    });
+                else
+                    sb.Append(format, i, end - i + 1);   // unknown token → verbatim
+                i = end;
+            }
+            else if (c == '}' && i + 1 < format.Length && format[i + 1] == '}')
+            {
+                sb.Append('}'); i++;
+            }
+            else
+            {
+                sb.Append(c);
+            }
+        }
+        return sb.ToString();
     }
 
     // Strips control chars / ANSI from string values; non-strings pass through untouched.

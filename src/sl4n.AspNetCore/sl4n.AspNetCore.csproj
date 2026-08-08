@@ -11,8 +11,8 @@
 
     <!-- Package identity -->
     <PackageId>sl4n.AspNetCore</PackageId>
-    <Version>1.0.4</Version>
-    <PackageReleaseNotes>1.0.3 — documentation fix only (remove the README logo). No API or behavior changes. See CHANGELOG.md.</PackageReleaseNotes>
+    <Version>1.0.6</Version>
+    <PackageReleaseNotes>1.0.6 - docs only: NuGet-safe README (plain Markdown header, no logo). Ships the 1.0.5 fixes: the log message no longer leaks masked values, DisposeAsync is idempotent so a clean host shutdown no longer throws, plus durable-transport outage callbacks and faster masking. See CHANGELOG.md.</PackageReleaseNotes>
     <Authors>Syntropy</Authors>
     <Company>Syntropy</Company>
     <Product>sl4n</Product>

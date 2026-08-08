@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
 
 jobs:
   build-and-test:
@@ -27,3 +27,28 @@ jobs:
 
       - name: Test
         run: dotnet test tests/sl4n.Tests/sl4n.Tests.csproj --no-build --configuration Release --verbosity normal
+
+  # "NativeAOT-compatible" is executed, not claimed: publish a real consumer app with
+  # PublishAot and RUN the binary — it logs PII through the README quick-start idiom and
+  # asserts the emitted JSON is masked (message included). Mirrors SyntropyLog's
+  # alpine-smoke job. See tests/sl4n.AotSmoke/Program.cs.
+  aot-smoke:
+    name: NativeAOT smoke (publish + execute)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Install AOT prerequisites
+        run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
+
+      - name: Publish (NativeAOT, linux-x64)
+        run: dotnet publish tests/sl4n.AotSmoke/sl4n.AotSmoke.csproj -c Release -r linux-x64 -o out-aot
+
+      - name: Execute the AOT binary
+        run: ./out-aot/sl4n.AotSmoke

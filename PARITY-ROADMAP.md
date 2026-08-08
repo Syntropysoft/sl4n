@@ -25,6 +25,25 @@ Baseline before this work: 81 tests green, `dotnet 10.0.300`, target `net8.0`, A
 
 ---
 
+## Backport analysis — SyntropyLog 1.4.1 / 1.4.2 (native + masking fixes)
+
+Four fixes that shipped in SyntropyLog (JS) 1.4.1/1.4.2 were analysed against sl4n (2026-08-08).
+**All four are N/A** — sl4n's architecture avoids each bug class by design, so there is nothing to
+port. Recorded here so the next person doesn't wonder whether they were missed.
+
+| SyntropyLog (JS) fix | sl4n | Why |
+| :-- | :-- | :-- |
+| **UTF-8 panic** in the native `truncate` (a byte-index slice split a multi-byte char → process `SIGABRT`, not catchable from JS) | N/A | No Rust addon. C# does no byte-index truncation of values; no `SIGABRT` path exists. |
+| **Masking mutated the caller's object** (the JS engine wrote redactions back in place, corrupting nested caller objects) | N/A | `MaskingEngine.Apply` is a non-mutating LINQ projection (`state.Select(...)` → a new sequence); masking is flat, with no deep-walk. |
+| **Cross-tenant PII leak** from a process-global native config (`OnceCell`) | N/A | DI, not a global singleton; `MaskingEngine.Create` is a per-instance factory — no shared native config. |
+| **Native path fed a serialized string to object-consuming transports** (durable audit / OTLP / adapters silently got a string they couldn't route or persist) | N/A | Object-based pipeline end to end: `ITransport.Log(IReadOnlyDictionary)` — the worker hands the dict to every transport, which serializes itself. There is no string fast-path to break. |
+
+Note the irony of #4: it makes the JS **native path** deliver each transport the shape it needs
+(string for console, object for adapters) — which is exactly what sl4n's worker already does. sl4n was
+born with that seam in the right place.
+
+---
+
 ## Phased plan
 
 - [x] **Phase 1 — Logging Matrix** ✅ (engine + typed builder + worker filtering + DI + 11 tests + README) — 92 tests green, AOT-clean
@@ -62,6 +81,90 @@ Baseline before this work: 81 tests green, `dotnet 10.0.300`, target `net8.0`, A
 
 All six phases delivered. Optional follow-ups: dedicated `docs/` pages mirroring SyntropyLog;
 a `MaxBufferedEntries` cap on `DurableFileTransport` for very long outages (currently unbounded).
+
+## JS-parity backlog (source audit 2026-07-10, done while planning the JVM port)
+
+Verified against the JS README "What's in the box" inventory — these are real gaps in sl4n's code,
+listed here so they live in the roadmap like everything else:
+
+- [ ] **PackageTags honesty (priority)** — `sl4n.csproj` lists `opentelemetry` in `PackageTags`
+      but no OTel integration exists anywhere in the code. Honest-positioning rule: remove the tag,
+      or build the feature (an `ITransport` emitting to an OTLP logger, per the JS README's
+      "OpenTelemetry" pattern). Do not ship a keyword without the capability.
+- [ ] **W3C `traceparent`** — context middleware supports inbound/outbound maps + UUID autogen but
+      does not parse `traceparent`; JS `correlationIdMiddleware` does. (The JVM port plans it in
+      its Phase 6 — .NET shouldn't lag its younger sibling.)
+- [ ] **Always-on `audit` level** — JS has an audit level that bypasses level thresholds; sl4n only
+      has retention tagging. Evaluate an MEL-idiomatic equivalent (EventId- or scope-based).
+- [ ] **Hot reconfiguration** — no `IOptionsMonitor` wiring; MEL supports it natively. Evaluate
+      hot-changing level/matrix (JS has runtime reconfiguration; Logback gives the JVM port `scan`
+      for free).
+- [ ] **Masking fixture (stretch)** — sl4n's strategy-enum model predates the canonical `MaskSpec`;
+      it does NOT run the shared 17-case `mask-parity-cases.json` that JS/Python/Rust/JVM assert.
+      Migrating to `MaskSpec` would put the whole family on one correctness contract.
+
+- [x] **Perf: per-key-name decision cache in masking** — DONE 2026-07-11 (family fix, found by
+      the Java port's JMH suite; Java 4,497→1,187 ns/op, JS 442→183, Python 5,576→1,697, all
+      same-day). sl4n was the least affected — `[GeneratedRegex]` defaults and no wide catch-all —
+      but custom config rules are runtime-interpreted regexes and their cost scaled linearly:
+      measured 235 ns/op (defaults) vs 642 ns/op (defaults + 8 custom). With the bounded
+      `ConcurrentDictionary` cache (cap 4096; `RegexMatchTimeoutException` is transient and NEVER
+      cached; rule set is immutable post-construction so no invalidation is needed): **75 / 79
+      ns/op** — masking cost no longer scales with the number of custom rules, which is exactly
+      the regulated-industry configuration (cuit/dni/iban/… stacked on top of the defaults).
+      140 tests green.
+
+---
+
+## Phase 7 — hardening backport (from SyntropyLog JS 1.4.0/1.4.1, 2026-07-14)
+
+The JS sibling shipped a hardening wave; these are the pieces that apply to .NET
+(ReDoS does NOT — sl4n already enforces a REAL 100 ms regex timeout by default,
+something V8 cannot do; and there is no native-addon fallback to observe).
+
+- [x] **7.1 Masking decision cache** — RESOLVED IN MERGE: the same family fix was implemented
+      independently upstream (2026-07-11, benchmarked 642→79 ns/op — see the backlog entry
+      above) while this branch built its own. The merge kept the upstream implementation
+      (`FindMatchingRule`/`ScanRules`, internal `DecisionCacheMax`, its test suite) and
+      grafted this branch's unique addition on top: public **`HasRuleFor(key)`** — a cached
+      decision lookup the worker needs for 7.5's message re-render (timeout ⇒ `true`,
+      fail-secure).
+- [x] **7.2 Durable outage observability** — `DurableFileTransport.TryForward` swallows the
+      inner failure (`catch { return false; }`): buffering IS the handling, but the operator
+      never learns an outage started, why, or that it recovered — and the worker can't see it
+      either (the durable eats the exception before per-transport isolation). Add optional
+      ctor callbacks, default null ⇒ behavior byte-identical: `onOutageStarted(Exception)`
+      fired ONCE per false→true backlog transition (JS 1.4.1 "report once, cached" lesson),
+      `onBacklogDrained(int delivered)` on full drain.
+- [x] **7.3 Poison spool line** — a crash mid-`Append` leaves a truncated JSON line;
+      `Deserialize` then throws inside `Drain()` on every subsequent `Log()` → the spool is
+      wedged forever. Skip unparseable lines (they were never a complete entry), report via
+      an optional `onCorruptLine(Exception, string)` callback.
+- [x] **7.4 CI executes the AOT claim** — ci.yml only builds+tests JIT, and only on `main`
+      (develop never runs CI!). Add develop to triggers, and an `aot-smoke` job: publish a
+      tiny console app with `PublishAot=true`, RUN the binary, assert masked output
+      (password `[REDACTED]`, no cleartext PII). Compiling proves it links; this proves it
+      runs. Mirrors the JS `alpine-smoke` job.
+- [x] **7.5 ★ PII LEAK: template-interpolated values land in `message` unmasked** — found
+      while building 7.4. `Sl4nLogger` stores `formatter(state, exception)` (MEL's
+      pre-formatted message, RAW values); the worker masks only `StructuredState`. So the
+      README's own quick start (`"Card charged {Amount} for {Email}"`) emits the cleartext
+      email inside `message` next to a masked `Email` field — looks masked, isn't. The .NET
+      twin of JS 1.2.0's message-first routing fix. The README output IS the contract; fix
+      the code to match it: when any state key has a masking rule (a cached decision — 7.1
+      synergy), re-render `message` from `{OriginalFormat}` using the MASKED values
+      (AOT-safe token substitution; `{{`/`}}` literals honored; format specifiers lose
+      fidelity only on re-rendered = masked entries). No state key with a rule ⇒ message is
+      byte-identical to MEL's (common case, zero cost beyond the cached lookups).
+- [x] **7.6 ★ Double-dispose crash on clean shutdown** — found by RUNNING the 7.4 smoke
+      (before AOT even entered the picture): the worker is registered both as a singleton
+      and as its own IHostedService — two DI descriptors, one instance — so the
+      ServiceProvider disposes it twice, and the second `DisposeAsync()` hit the disposed
+      CTS → `ObjectDisposedException` on every clean host shutdown. `DisposeAsync` is now
+      idempotent. Exactly why the smoke exists: executed, not claimed.
+
+All of Phase 7 delivered — AOT smoke passes (JIT-verified locally; the CI `aot-smoke`
+job publishes with PublishAot on linux-x64 and executes the binary).
 
 Minor cleanups:
 - [x] License — set to **Apache-2.0** (Gabriel's call) across `sl4n.csproj` + `sl4n.Testing.csproj`.
