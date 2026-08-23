@@ -54,6 +54,15 @@ que atrapa lo que el build no ve.
   sl4n aporta el resultado, no el mecanismo: acá no se re-implementa lo del port de JS, se amplifica
   lo que .NET ya trae. Y el acoplamiento **degrada**: si el mecanismo no está presente en tiempo de
   ejecución, hay fallback — nunca una excepción.
+- ❌ NEVER mezclar cálculo y efecto cuando se pueden separar. ✅ ALWAYS la **decisión** en una
+  función pura y `static` (`Sanitizer.Clean`, `RenderTemplate`, `LevelName`), y el **efecto**
+  — mutar el buffer, escribir al sink — en el borde que la llama. Guard clauses primero: el
+  fail-path sale arriba, sin `else`. SOLID sobre `ITransport`: se extiende agregando un sink,
+  no tocando el worker.
+  **El límite, explícito:** el hot path del worker muta buffers reutilizados **a propósito** — una
+  asignación por entrada, por millones de entradas — y eso NO se "arregla". La regla no es "nada
+  muta": es que lo que se *calcula* salga de funciones puras, y lo que *muta* sea un borde chico,
+  nombrado y justificado.
 - ❌ NEVER que un fallo de logging escape al caller — la promesa "logging never throws" es de la
   familia, no solo del Node.
 - ❌ NEVER publicar un paquete sin los tres en la misma versión, si el cambio los cruza.
