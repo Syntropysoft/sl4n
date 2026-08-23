@@ -91,6 +91,11 @@ born with that seam in the right place.
 All six phases delivered. Optional follow-ups: dedicated `docs/` pages mirroring SyntropyLog;
 a `MaxBufferedEntries` cap on `DurableFileTransport` for very long outages (currently unbounded).
 
+> ⚠️ **Before writing those `docs/` pages: `docs/` is in `.gitignore`** (under `# Internal docs`).
+> Write them today and git ignores them silently — they build, they commit, and they are simply not
+> there for anyone who clones. Either drop the ignore first or put the pages somewhere else. The
+> item is not actionable as written until that is decided.
+
 ## JS-parity backlog (source audit 2026-07-10, done while planning the JVM port)
 
 Verified against the JS README "What's in the box" inventory — these are real gaps in sl4n's code,
