@@ -202,6 +202,22 @@ listed here so they live in the roadmap like everything else:
       and needs no singleton. Same guarantee — one registry, one answer, whichever way it is asked —
       with a loud failure on an unregistered name rather than a silent null.
 
+- [ ] **No benchmark covers the worker — the place where the pipeline actually runs.** Found while
+      trying to measure the 2026-08-22 exemption change. Every benchmark in `benchmarks/` times
+      `logger.LogInformation(...)`, which only snapshots the scope and does a `TryWrite` on the
+      channel; the worker drains on another thread, so masking, matrix filtering, sanitization, the
+      7.5 re-render and the dual projection are **never measured** — including by the
+      `*ComparativeBenchmark*` filter CI runs on `main`.
+
+      Worse than a blind spot, it reads backwards: if the worker got slower, the channel would fill
+      sooner, `DropOldest` would start discarding, and the logger call would get *faster*. A
+      regression in the pipeline can show up as a benchmark improvement.
+
+      What is needed is a benchmark over `Sl4nTransportWorker.Build()` in isolation (feed a
+      `RawLogEvent`, no channel, no transports), so pipeline cost is attributable. Until then, any
+      claim about the pipeline's hot-path cost is a hypothesis — the masking decision-cache numbers
+      recorded above were measured against the engine directly, not through the worker.
+
 - [ ] **Channel drops are not counted — the audit trail can have a hole with no signal.** Found by
       `/sl-analyze` on 2026-08-22 while mapping the exemption. `Sl4nChannel.Create` is a bounded
       channel (4096) with `BoundedChannelFullMode.DropOldest`, and `Sl4nLogger.Log` ignores the
