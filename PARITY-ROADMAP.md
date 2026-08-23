@@ -22,6 +22,10 @@ Baseline before this work: 81 tests green, `dotnet 10.0.300`, target `net8.0`, A
 - **DI (`AddSl4n`)** instead of `init()` / global singleton.
 - `ITransport` **is** the "Universal Adapter".
 - **No native addon** — .NET already compiles native; the TS native/JS masking-parity bug does not apply.
+- **The masking exemption is keyed, not named.** JS matches `masking.exemptTransports` by transport
+  NAME, so it must raise `UnknownExemptTransportError` at startup — a typo would silently mask the
+  one sink that had to hold evidence. sl4n keys the registration instead, so that error has no twin
+  here: the state it exists to catch cannot be expressed. Do not "port" it.
 - **`RegexTimeoutMs` actually works here.** In JS the field is accepted and **inert** — V8 cannot
   interrupt a running regex, so the reference rejects explosive patterns statically at `init()` and
   says so rather than implying a guarantee it cannot keep. .NET's `Regex` honours a real timeout
@@ -148,7 +152,7 @@ listed here so they live in the roadmap like everything else:
       Option 2 or 3 should use `DateOnly` and compile-time unit exclusivity rather than mirroring the
       JS signature: parity is about the guarantee, not about the shape of the API.
 
-- [ ] **Masking exemption per sink — the audit trail needs the truth.** JS 1.5.0 added
+- [x] **Masking exemption per sink — the audit trail needs the truth.** ✅ DONE 2026-08-22 — JS 1.5.0 added
       `masking.exemptTransports`: masking runs once before the transport loop, so every sink gets
       the same obfuscated entry, which is right for consoles and APMs and wrong for exactly one —
       the audit ledger, where `2*****9` proves nothing. sl4n has no equivalent: `MaskingConfig` is
@@ -163,6 +167,13 @@ listed here so they live in the roadmap like everything else:
       Keep the rest of the reference's rule: the exemption is declared by the **application**, never
       by a transport about itself — a dependency must not be able to ship a sink that exempts
       itself — and everything else still applies to the exempt output (truncation, depth caps).
+
+      **Shipped as `Sl4nTransportKeys.Unmasked` + keyed DI**, which turned out better than the
+      "typed marker" this entry imagined: there is no marker type at all. `GetServices<ITransport>()`
+      does not return keyed registrations, so the framework hands the worker the two groups already
+      separated — no reference matching, no orphan-marker state to guard against. Skips masking only;
+      matrix and sanitizer still apply. Verified by publishing and EXECUTING the AOT smoke, which
+      asserts the console has no cleartext and the keyed sink does.
 
 - [ ] **Retention policy versioning — provenance, not computation.** JS 2.0.0 added
       `retention: { version, emitRules }`: with `emitRules` on, the full rules ride on the entry

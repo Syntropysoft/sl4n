@@ -299,4 +299,50 @@ public sealed class MaskingEngineTests
         ApplyWith(engine, ("email", "john@example.com"))["email"].Should().Be("j**n@example.com");
         engine.DecisionCacheSize.Should().Be(1);
     }
+
+    // ── MaskOne is Apply, one pair at a time ─────────────────────────────────────────
+    // The worker builds a masked and an unmasked projection from a SINGLE pass over the
+    // state, so it masks per key instead of calling Apply. If the two ever disagreed,
+    // exempting one sink would quietly change what every other sink receives.
+
+    [Theory]
+    [InlineData("email", "john@example.com")]      // rule matches, string
+    [InlineData("password", "hunter2")]            // rule matches, different strategy
+    [InlineData("userId", "abc-123")]              // no rule
+    [InlineData("Email", "not-an-email")]          // rule matches, value doesn't parse
+    [InlineData("email", null)]                    // null under a matching rule
+    [InlineData("token", "")]                      // empty under a matching rule
+    public void MaskOne_MatchesApply_PairForPair(string key, object? value)
+    {
+        MaskingEngine engine = MaskingEngine.Create(new MaskingConfig { EnableDefaultRules = true });
+
+        object? viaApply = engine
+            .Apply([KeyValuePair.Create(key, value)])
+            .Single().Value;
+
+        engine.MaskOne(key, value).Should().Be(viaApply);
+    }
+
+    [Fact]
+    public void MaskOne_MatchesApply_ForNonStringUnderASensitiveKey()
+    {
+        MaskingEngine engine = MaskingEngine.Create(new MaskingConfig { EnableDefaultRules = true });
+        object?[] values = [42, 3.5, true, new { a = 1 }, new[] { 1, 2 }];
+
+        foreach (object? v in values)
+        {
+            object? viaApply = engine.Apply([KeyValuePair.Create<string, object?>("password", v)])
+                                     .Single().Value;
+            engine.MaskOne("password", v).Should().Be(viaApply);
+        }
+    }
+
+    [Fact]
+    public void MaskOne_WithNoRules_ReturnsTheValueUntouched_LikeApply()
+    {
+        MaskingEngine engine = MaskingEngine.Create(new MaskingConfig { EnableDefaultRules = false });
+
+        engine.MaskOne("email", "john@example.com").Should().Be("john@example.com");
+        engine.DecisionCacheSize.Should().Be(0); // no rules ⇒ no scan, nothing cached
+    }
 }

@@ -10,6 +10,7 @@ public sealed class Sl4nTransportWorker : IHostedService, IAsyncDisposable
 {
     private readonly ChannelReader<RawLogEvent>  _reader;
     private readonly IReadOnlyList<ITransport>   _transports;
+    private readonly IReadOnlyList<ITransport>   _unmasked;
     private readonly MaskingEngine               _masking;
     private readonly LoggingMatrix               _matrix;
     private readonly RetentionRegistry           _retention;
@@ -22,6 +23,10 @@ public sealed class Sl4nTransportWorker : IHostedService, IAsyncDisposable
     // Transport.Log() must not hold a reference to the dictionary after returning.
     private readonly Dictionary<string, object?> _dict = new(16);
 
+    // Second projection, carrying the values as they arrived. Allocated only when a sink is
+    // registered under Sl4nTransportKeys.Unmasked — null is the common case and costs nothing.
+    private readonly Dictionary<string, object?>? _rawDict;
+
     internal Sl4nTransportWorker(
         ChannelReader<RawLogEvent>  reader,
         IEnumerable<ITransport>     transports,
@@ -29,10 +34,13 @@ public sealed class Sl4nTransportWorker : IHostedService, IAsyncDisposable
         LoggingMatrix?              matrix       = null,
         Sl4nStats?                  stats        = null,
         Action<Exception, string>?  onLogFailure = null,
-        RetentionRegistry?          retention    = null)
+        RetentionRegistry?          retention    = null,
+        IEnumerable<ITransport>?    unmasked     = null)
     {
         _reader       = reader;
         _transports   = transports.ToList();
+        _unmasked     = unmasked?.ToList() ?? [];
+        _rawDict      = _unmasked.Count > 0 ? new Dictionary<string, object?>(16) : null;
         _masking      = masking;
         _matrix       = matrix ?? LoggingMatrix.Empty;
         _retention    = retention ?? RetentionRegistry.Empty;
@@ -86,35 +94,45 @@ public sealed class Sl4nTransportWorker : IHostedService, IAsyncDisposable
                 // Safe to skip — the entry is a framework diagnostic, not user data.
                 _stats.IncrDroppedEntries();
                 _dict.Clear();
+                _rawDict?.Clear();
                 continue;
             }
 
-            // Per-transport isolation — one transport throwing must not kill the worker or starve
-            // the others. Count it, surface it via OnLogFailure, and keep going.
-            foreach (ITransport transport in _transports)
-            {
-                try
-                {
-                    transport.Log(_dict);
-                }
-                catch (Exception ex)
-                {
-                    _stats.IncrTransportFailures();
-                    _onLogFailure?.Invoke(ex, transport.GetType().Name);
-                }
-            }
+            Deliver(_transports, _dict);
+            if (_rawDict is not null) Deliver(_unmasked, _rawDict);
 
             _dict.Clear();
+            _rawDict?.Clear();
+        }
+    }
+
+    // Per-transport isolation — one transport throwing must not kill the worker or starve the
+    // others. Count it, surface it via OnLogFailure, and keep going.
+    private void Deliver(IReadOnlyList<ITransport> transports, Dictionary<string, object?> entry)
+    {
+        foreach (ITransport transport in transports)
+        {
+            try
+            {
+                transport.Log(entry);
+            }
+            catch (Exception ex)
+            {
+                _stats.IncrTransportFailures();
+                _onLogFailure?.Invoke(ex, transport.GetType().Name);
+            }
         }
     }
 
     private void Build(in RawLogEvent e)
     {
         string level = LevelName(e.Level);
-        if (e.Timestamp != default) _dict["timestamp"] = e.Timestamp.ToString("O");
-        _dict["level"]    = level;
-        _dict["category"] = e.Category;
-        _dict["message"]  = Sanitizer.Clean(e.Message);
+        if (e.Timestamp != default) Put("timestamp", e.Timestamp.ToString("O"));
+        Put("level",    level);
+        Put("category", e.Category);
+        // MEL's own message, interpolated with the RAW values. The masked projection overwrites it
+        // below when a key is maskable (7.5); the unmasked one keeps it — that is the whole point.
+        Put("message",  Sanitizer.Clean(e.Message));
 
         // Scope (context) fields are unmasked — they come from the propagation context, not from
         // user log calls — but they ARE filtered by the Logging Matrix for this level.
@@ -131,18 +149,18 @@ public sealed class Sl4nTransportWorker : IHostedService, IAsyncDisposable
                     continue;
                 }
                 if (allowed is null || allowed.Contains(kv.Key))
-                    _dict[kv.Key] = Sanitize(kv.Value);
+                    Put(kv.Key, Sanitize(kv.Value));
             }
         }
 
         // Retention metadata bypasses the matrix — it is a compliance tag, not user context.
         if (retentionName is not null)
         {
-            _dict["retention"] = retentionName;
+            Put("retention", retentionName);
             if (_retention.TryResolve(retentionName, out RetentionPolicy? policy))
             {
-                _dict["retentionClass"] = policy.Class;
-                _dict["retentionDays"]  = policy.Days;
+                Put("retentionClass", policy.Class);
+                Put("retentionDays",  policy.Days);
             }
         }
 
@@ -150,10 +168,15 @@ public sealed class Sl4nTransportWorker : IHostedService, IAsyncDisposable
         {
             string? originalFormat = null;
             bool maskable = false;
-            foreach (KeyValuePair<string, object?> kv in _masking.Apply(e.StructuredState))
+            // ONE pass over the state. It is a lazy reference that can hang off a request scope
+            // (see the ObjectDisposedException catch above), so masking per key with MaskOne —
+            // rather than projecting twice through Apply — is what keeps the second projection
+            // from re-enumerating it. MaskOne is Apply pair-for-pair; equivalence is pinned by test.
+            foreach (KeyValuePair<string, object?> kv in e.StructuredState)
             {
                 if (kv.Key == "{OriginalFormat}") { originalFormat = kv.Value as string; continue; }
-                _dict[kv.Key] = Sanitize(kv.Value);
+                if (_rawDict is not null) _rawDict[kv.Key] = Sanitize(kv.Value);
+                _dict[kv.Key] = Sanitize(_masking.MaskOne(kv.Key, kv.Value));
                 if (!maskable && _masking.HasRuleFor(kv.Key)) maskable = true;
             }
 
@@ -169,7 +192,15 @@ public sealed class Sl4nTransportWorker : IHostedService, IAsyncDisposable
 
         // Exception blob is left intact — its newlines carry the stack trace.
         if (e.Exception is not null)
-            _dict["exception"] = e.Exception.ToString();
+            Put("exception", e.Exception.ToString());
+    }
+
+    // Writes to both projections. The unmasked one only exists when a sink is registered under
+    // Sl4nTransportKeys.Unmasked; otherwise this is a plain dictionary write.
+    private void Put(string key, object? value)
+    {
+        _dict[key] = value;
+        if (_rawDict is not null) _rawDict[key] = value;
     }
 
     // Re-renders a MEL message template using the (already masked + sanitized) dict values.

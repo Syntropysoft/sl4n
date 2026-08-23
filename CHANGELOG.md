@@ -6,6 +6,32 @@ All notable changes to **sl4n** are documented here. This project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **Masking exemption per sink — the audit trail gets the truth (1.1.0).** Masking runs once before
+  the transport loop, so until now every sink received the same redacted entry. That is right for
+  consoles and APMs and wrong for exactly one: the audit ledger, where `j**n@example.com` proves
+  nothing. A sink registered under `Sl4nTransportKeys.Unmasked` now receives the values as they
+  arrived, plus MEL's own message instead of the re-rendered one.
+
+  The exemption is **keyed DI**, not an sl4n API: `AddKeyedSingleton<ITransport>(Sl4nTransportKeys.Unmasked, sink)`.
+  The JS reference matches exempt sinks by name and therefore needs an `UnknownExemptTransportError`
+  to catch a typo that would silently mask the one sink holding the evidence. Here the framework
+  keeps the two groups apart on its own — keyed services do not come back from `GetServices<T>()` —
+  so that failure cannot be expressed. Forgetting the key masks the sink, which errs safe.
+
+  It skips masking and **nothing else**: the logging matrix still filters context fields and the
+  sanitizer still strips control characters. Both are pinned by test.
+
+  Cost when unused is zero: the second projection is allocated only if a sink is registered under
+  the key. The state is enumerated **exactly once** either way — it is a lazy reference that can
+  hang off a disposed request scope, so a re-enumeration would drop the entry for every sink, not
+  just the exempt one. Pinned by `LazyState_IsEnumeratedExactlyOnce_WithExemptSink`.
+
+  Verified under Native AOT by publishing and **executing** the smoke binary, which now asserts both
+  sides: no cleartext on the console, cleartext in the keyed sink.
+
+
 ## [1.0.6] — 2026-08-08
 
 Documentation only — **no API or behavior changes**. Ship the 1.0.5 fixes with a NuGet-safe README.

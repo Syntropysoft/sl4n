@@ -242,6 +242,40 @@ Guarantees:
 
 > **Scope — by field name, never free text.** A value is masked because its *key* matches a rule, not because the string *looks* sensitive. Masking does **not** deep-walk nested object graphs — that would move a mountain of data on every log and penalize latency. Structure sensitive data as keyed fields; a nested object under a sensitive key is still redacted whole. This mirrors SyntropyLog's by-key spirit, kept allocation-light and AOT-safe for .NET.
 
+### One sink that needs the truth
+
+Masking is right for consoles, APMs and dashboards, and wrong for exactly one sink: the audit
+ledger, where `j**n@example.com` proves nothing. Register that sink with **keyed DI** — the
+mechanism .NET already gives you — and it receives the values as they arrived:
+
+```csharp
+services.AddSl4n(cfg => cfg.Masking.EnableDefaultRules = true);
+services.AddKeyedSingleton<ITransport>(Sl4nTransportKeys.Unmasked, new AuditLedgerTransport());
+```
+
+Same log call, two sinks, two truths:
+
+```jsonc
+// console (masked, as always)
+{"level":"information","message":"Charged 299.9 for j**n@example.com","Email":"j**n@example.com"}
+
+// audit ledger (keyed Unmasked)
+{"level":"information","message":"Charged 299.9 for john@example.com","Email":"john@example.com"}
+```
+
+- **It skips masking and nothing else.** The logging matrix still filters context fields and the
+  sanitizer still strips control characters — the matrix decides what is *noise*, the sanitizer
+  protects the sink's *integrity*; neither is about privacy.
+- **The application declares it, never the transport.** The key lives on the registration, so a
+  dependency cannot ship a sink that exempts itself.
+- **Forget the key and the sink is masked** — the failure lands on the safe side.
+- **No sl4n API to learn.** It is `AddKeyedSingleton`, with any lifetime or factory .NET supports.
+  There is no name matching involved, so there is no typo that could silently mask the one sink
+  that had to hold the evidence.
+
+> Send the unmasked entry somewhere that deserves it. A file or a console under this key defeats
+> the point of masking everywhere else.
+
 ---
 
 ## Context propagation

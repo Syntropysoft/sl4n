@@ -89,6 +89,15 @@ public sealed class MaskingEngine
         }
     }
 
+    /// <summary>
+    /// Masks one value by its key — the per-pair form of <see cref="Apply"/>, for a caller that
+    /// needs the raw and the masked value out of a SINGLE pass over the state (the worker building
+    /// a masked and an unmasked projection at once). Same decision, same cache, same fail-secure
+    /// behaviour; equivalence with <see cref="Apply"/> is pinned by test.
+    /// </summary>
+    internal object? MaskOne(string key, object? value) =>
+        _rules.Count == 0 ? value : MaskValue(key, value);
+
     private object? MaskValue(string key, object? value)
     {
         if (value is null) return null;

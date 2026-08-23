@@ -69,7 +69,11 @@ public static class Sl4nServiceCollectionExtensions
                 sp.GetRequiredService<LoggingMatrix>(),
                 sp.GetRequiredService<Sl4nStats>(),
                 cfg.OnLogFailure,
-                sp.GetRequiredService<RetentionRegistry>());
+                sp.GetRequiredService<RetentionRegistry>(),
+                // Sinks registered under Sl4nTransportKeys.Unmasked. Keyed services do NOT come
+                // back from GetServices<ITransport>(), so the framework hands us the two groups
+                // already separated — no marker type and no reference matching of our own.
+                sp.GetKeyedServices<ITransport>(Sl4nTransportKeys.Unmasked));
         });
 
         services.AddHostedService(sp => sp.GetRequiredService<Sl4nTransportWorker>());
