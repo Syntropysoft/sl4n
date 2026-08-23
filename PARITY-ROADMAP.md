@@ -87,6 +87,34 @@ a `MaxBufferedEntries` cap on `DurableFileTransport` for very long outages (curr
 Verified against the JS README "What's in the box" inventory — these are real gaps in sl4n's code,
 listed here so they live in the roadmap like everything else:
 
+- [ ] **Retention shape diverged from the reference — decision pending (2026-08-22).** Not an
+      incomplete port: a different design, and it is not recorded under *.NET salvedades*, so it is
+      either a divergence to close or a salvedad to declare. Three axes:
+
+      | | SyntropyLog 2.1.0 | sl4n |
+      |---|---|---|
+      | unit | `years` XOR `months` | `Days` (int) |
+      | emitted | `retention` + `retentionUntil` (materialised date) | `retention` + `retentionClass` + `retentionDays` (duration) |
+      | field names | `retention`, `retentionUntil` | `retention`, `retentionClass`, `retentionDays` |
+
+      The second axis is the one that carries weight. The reference materialises the date **at write
+      time** so a sweep is a plain range scan — `WHERE retention_until < now()` — correct across
+      records filed under different revisions of the same policy, without the sweeper knowing
+      anything about policies. `retentionDays` is also stamped at write time, so it survives
+      revisions equally, but the sweep becomes `written_at + retentionDays`, a computed expression
+      rather than an indexable column. See `docs/compliance.md` § *Where this framework's job ends*
+      in the JS repo for the full argument.
+
+      Options, with their cost — **not decided, this is a maintainer call** because sl4n publishes
+      three NuGet packages and the emitted shape is part of their contract:
+
+      1. **Declare it a salvedad.** Move it to *.NET salvedades* and stop treating it as a gap. Free.
+      2. **Add `retentionUntil` alongside** `retentionDays`, keeping both. Additive, minor, nobody
+         breaks, and consumers that want the range scan get it.
+      3. **Converge on the reference** — `years`/`months`, `retentionUntil`, deprecate
+         `retentionDays`. What a strict reading of the parity contract asks for, and **breaking**
+         across all three packages.
+
 - [ ] **PackageTags honesty (priority)** — `sl4n.csproj` lists `opentelemetry` in `PackageTags`
       but no OTel integration exists anywhere in the code. Honest-positioning rule: remove the tag,
       or build the feature (an `ITransport` emitting to an OTLP logger, per the JS README's
