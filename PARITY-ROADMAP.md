@@ -22,6 +22,15 @@ Baseline before this work: 81 tests green, `dotnet 10.0.300`, target `net8.0`, A
 - **DI (`AddSl4n`)** instead of `init()` / global singleton.
 - `ITransport` **is** the "Universal Adapter".
 - **No native addon** — .NET already compiles native; the TS native/JS masking-parity bug does not apply.
+- **The masking exemption is keyed, not named.** JS matches `masking.exemptTransports` by transport
+  NAME, so it must raise `UnknownExemptTransportError` at startup — a typo would silently mask the
+  one sink that had to hold evidence. sl4n keys the registration instead, so that error has no twin
+  here: the state it exists to catch cannot be expressed. Do not "port" it.
+- **`RegexTimeoutMs` actually works here.** In JS the field is accepted and **inert** — V8 cannot
+  interrupt a running regex, so the reference rejects explosive patterns statically at `init()` and
+  says so rather than implying a guarantee it cannot keep. .NET's `Regex` honours a real timeout
+  (`RegexMatchTimeoutException`, see `MaskingEngine.cs`), so sl4n has a runtime backstop the
+  reference cannot have. A difference in our favour — keep it, and do not "align" it away.
 
 ---
 
@@ -86,6 +95,199 @@ a `MaxBufferedEntries` cap on `DurableFileTransport` for very long outages (curr
 
 Verified against the JS README "What's in the box" inventory — these are real gaps in sl4n's code,
 listed here so they live in the roadmap like everything else:
+
+- [x] **Retention shape diverged from the reference — RESOLVED 2026-08-23, Option 2 (Gabriel's
+      call).** `retentionUntil` is now materialised alongside `retentionDays`, and `RetentionPolicy`
+      gained `Months`/`Years` with exactly-one-unit enforced at startup. The rounding is overridden
+      to roll forward, pinned by test. `DateOnly` is used for the arithmetic but the emitted form is
+      an ISO string — a bare `DateOnly` would have been formatted by `ConsoleTransport` with the
+      server's culture. `TimeProvider` turned out to be unnecessary: the event already carries the
+      timestamp the window must anchor to, which is more correct than any clock the worker could
+      read. Original analysis kept below for the reasoning.
+
+      **Original analysis.** Not an
+      incomplete port: a different design, and it is not recorded under *.NET salvedades*, so it is
+      either a divergence to close or a salvedad to declare. Three axes:
+
+      | | SyntropyLog 2.1.0 | sl4n |
+      |---|---|---|
+      | unit | `years` XOR `months` | `Days` (int) |
+      | emitted | `retention` + `retentionUntil` (materialised date) | `retention` + `retentionClass` + `retentionDays` (duration) |
+      | field names | `retention`, `retentionUntil` | `retention`, `retentionClass`, `retentionDays` |
+
+      The second axis is the one that carries weight. The reference materialises the date **at write
+      time** so a sweep is a plain range scan — `WHERE retention_until < now()` — correct across
+      records filed under different revisions of the same policy, without the sweeper knowing
+      anything about policies. `retentionDays` is also stamped at write time, so it survives
+      revisions equally, but the sweep becomes `written_at + retentionDays`, a computed expression
+      rather than an indexable column. See `docs/compliance.md` § *Where this framework's job ends*
+      in the JS repo for the full argument.
+
+      **Platform trap — verified on .NET 10, and it inverts the invariant.** The reference rounds
+      *long* on every edge case, on purpose: ending a window early is the failure an auditor
+      punishes. .NET's built-in arithmetic rounds *short*.
+
+      | | JS (`setUTCMonth` / `setUTCFullYear`) | .NET (`AddMonths` / `AddYears`) |
+      |---|---|---|
+      | 31-Jan + 1 month | **3-Mar** — longer | **28-Feb** — shorter |
+      | 29-Feb + 7 years | **1-Mar** — longer | **28-Feb** — shorter |
+      | 29-Feb + 12 months | **1-Mar** — longer | **28-Feb** — shorter |
+
+      So materialising a date here is not "port the JS function". A naive `AddMonths` ends every
+      edge-case window one to three days early — code that looks correct and quietly produces the
+      exact failure the design exists to prevent. Whatever shape is chosen, the rounding has to be
+      overridden explicitly and pinned by a test, the way the JS side pins the rollover.
+
+      **What .NET brings that JS cannot**, and which may make the right answer here *better* than
+      the reference rather than merely different:
+
+      - `DateOnly` — a compliance window ends on a **date**, not an instant. JS has only `Date`.
+      - The unit can be years-XOR-months **at compile time** (required-one-of), instead of a union
+        the caller can still violate at runtime as in JS.
+      - `TimeProvider` makes write-time computation deterministic in tests without injecting clocks
+        by hand.
+
+      Options, with their cost — **not decided, this is a maintainer call** because sl4n publishes
+      three NuGet packages and the emitted shape is part of their contract:
+
+      1. **Declare it a salvedad.** Move it to *.NET salvedades* and stop treating it as a gap. Free,
+         and defensible if the consumers here sweep on a duration.
+      2. **Add a materialised date alongside** `retentionDays`, keeping both. Additive, minor, nobody
+         breaks, and consumers that want the range scan get it. Needs the rounding override.
+      3. **Converge on the reference** — one unit, a materialised date, deprecate `retentionDays`.
+         What a strict reading of the parity contract asks for, and **breaking** across all three
+         packages.
+
+      Option 2 or 3 should use `DateOnly` and compile-time unit exclusivity rather than mirroring the
+      JS signature: parity is about the guarantee, not about the shape of the API.
+
+- [x] **Masking exemption per sink — the audit trail needs the truth.** ✅ DONE 2026-08-22 — JS 1.5.0 added
+      `masking.exemptTransports`: masking runs once before the transport loop, so every sink gets
+      the same obfuscated entry, which is right for consoles and APMs and wrong for exactly one —
+      the audit ledger, where `2*****9` proves nothing. sl4n has no equivalent: `MaskingConfig` is
+      `EnableDefaultRules` / `Rules` / `RegexTimeoutMs`, and nothing can opt a sink out.
+
+      **.NET can do this better than the reference.** JS matches exempt sinks by **name**, which is
+      why it needs `UnknownExemptTransportError` — a typo would silently mask the one sink that had
+      to hold evidence. Here `ITransport` is already the adapter and registration goes through DI, so
+      the exemption can be a typed marker on the registration instead of a string list. The whole
+      typo failure class disappears rather than being caught at startup.
+
+      Keep the rest of the reference's rule: the exemption is declared by the **application**, never
+      by a transport about itself — a dependency must not be able to ship a sink that exempts
+      itself — and everything else still applies to the exempt output (truncation, depth caps).
+
+      **Shipped as `Sl4nTransportKeys.Unmasked` + keyed DI**, which turned out better than the
+      "typed marker" this entry imagined: there is no marker type at all. `GetServices<ITransport>()`
+      does not return keyed registrations, so the framework hands the worker the two groups already
+      separated — no reference matching, no orphan-marker state to guard against. Skips masking only;
+      matrix and sanitizer still apply. Verified by publishing and EXECUTING the AOT smoke, which
+      asserts the console has no cleartext and the keyed sink does.
+
+- [ ] **Retention policy versioning — provenance, not computation.** JS 2.0.0 added
+      `retention: { version, emitRules }`: with `emitRules` on, the full rules ride on the entry
+      under `retentionRules`, stamped `policyVersion`. sl4n's `RetentionPolicy` is `{ Days, Class }`
+      — no version anywhere, and no way to say which revision a record was filed under.
+
+      Worth being precise about what this is *not* for. The non-linear purge already works here:
+      because `retentionDays` is stamped at write time, records filed under a policy later revised
+      from 36 to 42 to 12 months each keep the window in force when they were written, and no sweep
+      has to reconstruct which revision applied. Versioning does not fix that — it is **provenance**,
+      for the auditor asking under which revision a given record was filed. Registries get re-seeded;
+      without the stamp a persisted rule cannot say which one it came from.
+
+      Scope the emission the same way: off by default, because an in-process consumer resolves the
+      class at write time (see the next item) and only an **out-of-process** reader — a shipper
+      parsing JSON with no registry — needs the rules on the entry.
+
+- [x] **Resolve a policy without a logger.** ✅ DONE 2026-08-23. JS 2.0.0 added `getRetentionPolicy(name)`,
+      `getRetentionPolicies()` and `getRetentionUntil(name, at)` so a domain write path that
+      persists the retention class in its own column gets the same answer the logger got, against
+      the same frozen registry, at write time. sl4n has `RetentionRegistry` but nothing public that
+      resolves against it outside the logging path.
+
+      **DI made this cleaner here than in JS.** The reference bolted accessors onto a global facade;
+      sl4n exposes the registry as an injectable read-only service — no singleton, no facade.
+
+      **Correction to this entry as originally written** (it claimed nothing public resolved outside
+      the logging path): `RetentionRegistry` was already `public`, `TryResolve` was already `public`,
+      and it was already a registered singleton. What was actually missing, and is now there:
+      `Policies` (the frozen registry, enumerable), `Resolve(name)` which throws
+      `RetentionPolicyNotFoundException` carrying the name and the sorted available ones, and
+      `Until(name, at)` which reuses the same `RetentionWindow` the worker uses — so a domain write
+      path and the log line cannot disagree about when a record expires. `TryResolve` stays for
+      callers where a miss is a branch rather than a bug.
+
+      Writing the adversarial test paid for itself: `IReadOnlyDictionary` does **not** make a map
+      read-only — a downcast to `IDictionary` brings the mutators back, and a caller who kept the
+      dictionary it handed over could edit it afterwards. Both routes let a compliance window be
+      redefined for records already written under the old one. The registry now copies on
+      construction and exposes a real `ReadOnlyDictionary`; both routes have a test.
+
+- [x] **No benchmark covered the worker — the place where the pipeline actually runs.** ✅ DONE
+      2026-08-22 (`WorkerBuildBenchmark` + the internal `BuildOnly` hook).
+
+      Found while trying to measure the exemption change. Every benchmark in `benchmarks/` timed
+      `logger.LogInformation(...)`, which only snapshots the scope and does a `TryWrite` on the
+      channel; the worker drains on another thread, so masking, matrix filtering, sanitization, the
+      7.5 re-render and the dual projection were **never measured** — including by the
+      `*ComparativeBenchmark*` filter CI runs on `main`. Worse than a blind spot, it read backwards:
+      a slower worker fills the channel sooner, `DropOldest` starts discarding, and the logger call
+      gets *faster*, so a pipeline regression could surface as a benchmark win.
+
+      `WorkerBuildBenchmark` times `Build()` over one event with no channel and no transports, so
+      the cost is attributable. **Baseline, Apple M2 / .NET 10 / 15 iterations:**
+
+      | scenario | mean | allocated |
+      |---|---:|---:|
+      | bare entry (no state, no scope) | 52 ns | 88 B |
+      | 3 fields, masking off | 119 ns | 120 B |
+      | 3 fields, masking on (+ message re-render) | 353 ns | 896 B |
+      | + scope filtered by the matrix | 419 ns | 896 B |
+      | + retention scope | 355 ns | 896 B |
+      | + exempt sink (dual projection) | 418 ns | 896 B |
+
+      The dual projection costs ~65 ns and **no extra allocation** — the second dictionary is
+      created once in the constructor, not per entry.
+
+      Also settled the open question from the exemption cut: measured against `48e9dfa` (the commit
+      before it) with the same benchmark ported into a worktree, unifying the masking loop
+      **improved** the masked path by 8% and removed 88 B per entry — the LINQ `Select` iterator
+      plus the closure that captured `this`. The masking-off path, where there was no `Select` to
+      remove, did not move (118 → 119 ns, noise); that is what makes the other numbers trustworthy
+      rather than flattering.
+
+      Note the decision-cache figures recorded further up were measured against the engine
+      directly, not through the worker — they are not comparable to this table.
+
+- [ ] **Channel drops are not counted — the audit trail can have a hole with no signal.** Found by
+      `/sl-analyze` on 2026-08-22 while mapping the exemption. `Sl4nChannel.Create` is a bounded
+      channel (4096) with `BoundedChannelFullMode.DropOldest`, and `Sl4nLogger.Log` ignores the
+      result of `TryWrite`. When the worker falls behind, the channel silently discards the oldest
+      entries — and `IncrDroppedEntries` is invoked from exactly ONE place, the
+      `ObjectDisposedException` catch in the worker (verified by grep: it is the only call site in
+      `src/`). `Sl4nStatsSnapshot.DroppedEntries` even documents itself as *"entries skipped because
+      their lazy state was already disposed"*, so it does not pretend to cover this.
+
+      Fail-path: a logging burst enqueues more than 4096 before the worker drains, entries are lost,
+      and `Snapshot()` reports `DroppedEntries: 0`. If one of them carried a SOX retention tag, the
+      audit trail has a hole and nothing indicates it. Dropping under pressure is deliberate and
+      correct — logging must not block the app. Dropping **without counting**, while publishing a
+      drop counter, is the defect.
+
+      No test covers it either: all six worker harnesses build the channel with
+      `Channel.CreateUnbounded`, so the production bounded path is never exercised.
+
+- [ ] **Two High advisories in the dev-only projects** (found at the 1.1.0 release pre-flight,
+      2026-08-23). `dotnet list package --vulnerable --include-transitive`:
+      `System.Text.Json 8.0.0` (High, GHSA-hh2w-p6rv-4g7w) pulled transitively into
+      `sl4n.Benchmarks`, and `System.Net.Http 4.3.0` (High, GHSA-7jgj-8wvc-jh57) into `sl4n.Tests`.
+
+      **The three published packages are clean** — verified per project — so nothing vulnerable ships
+      to a consumer and this did not block the release. But they are High, they are in the repo, and
+      nothing in CI would have told us: there is no vulnerability check in any workflow. Two things
+      to do: bump the transitive pins, and add `dotnet list package --vulnerable` to CI so the next
+      one is caught by the pipeline rather than by someone running a pre-flight by hand.
 
 - [ ] **PackageTags honesty (priority)** — `sl4n.csproj` lists `opentelemetry` in `PackageTags`
       but no OTel integration exists anywhere in the code. Honest-positioning rule: remove the tag,

@@ -17,19 +17,24 @@ NativeAOT-compatible.
 
 ---
 
-## What's new in 1.0.5
+## What's new in 1.1.0
 
-Two correctness fixes that make **1.0.4 worth skipping** — upgrade if you're on it. Full detail in
-[CHANGELOG.md](./CHANGELOG.md).
+Additive — nothing existing changes shape. Full detail in [CHANGELOG.md](./CHANGELOG.md).
 
-- **Log message no longer leaks masked values.** MEL pre-formats the message with raw values, so an
-  interpolated PII field (`log.Info("… {Email}", email)`) used to sit in cleartext inside `message`
-  next to the masked `Email` field. The worker now re-renders the message from the masked values.
-- **No more crash on host shutdown.** The transport worker (registered as singleton + `IHostedService`)
-  was disposed twice by the DI container, throwing `ObjectDisposedException` on every clean shutdown.
-  `DisposeAsync` is now idempotent.
-- Plus: durable-transport outage callbacks, a poison-spool-line fix, and masking that no longer slows
-  down as you add custom rules.
+- **One sink can receive the truth.** Masking runs before the transport loop, so every sink used to
+  get the same redacted entry — right for consoles, wrong for the audit ledger, where
+  `j**n@example.com` proves nothing. Register a sink under `Sl4nTransportKeys.Unmasked` with plain
+  keyed DI and it gets the values as they arrived. [→](#one-sink-that-needs-the-truth)
+- **`retentionUntil`**, the compliance window materialised at write time, so a purge is an indexable
+  range scan. `RetentionPolicy` gained `Months` and `Years` — and the arithmetic rounds **long**,
+  because .NET's own `AddMonths` would end every edge-case window up to three days early.
+  [→](#retentionuntil--the-window-materialised)
+- **Resolve a policy without a logger**, so a domain write path that stores the retention class in
+  its own column gets the same answer the log line carries. [→](#resolving-a-policy-outside-the-logger)
+- Zero build warnings, enforced: the published projects compile with `TreatWarningsAsErrors`.
+
+**From 1.0.5**, if you are further behind: the log message no longer leaks interpolated PII, and the
+double-dispose crash on clean host shutdown is fixed. Those two make **1.0.4 worth skipping**.
 
 ---
 
@@ -242,6 +247,40 @@ Guarantees:
 
 > **Scope — by field name, never free text.** A value is masked because its *key* matches a rule, not because the string *looks* sensitive. Masking does **not** deep-walk nested object graphs — that would move a mountain of data on every log and penalize latency. Structure sensitive data as keyed fields; a nested object under a sensitive key is still redacted whole. This mirrors SyntropyLog's by-key spirit, kept allocation-light and AOT-safe for .NET.
 
+### One sink that needs the truth
+
+Masking is right for consoles, APMs and dashboards, and wrong for exactly one sink: the audit
+ledger, where `j**n@example.com` proves nothing. Register that sink with **keyed DI** — the
+mechanism .NET already gives you — and it receives the values as they arrived:
+
+```csharp
+services.AddSl4n(cfg => cfg.Masking.EnableDefaultRules = true);
+services.AddKeyedSingleton<ITransport>(Sl4nTransportKeys.Unmasked, new AuditLedgerTransport());
+```
+
+Same log call, two sinks, two truths:
+
+```jsonc
+// console (masked, as always)
+{"level":"information","message":"Charged 299.9 for j**n@example.com","Email":"j**n@example.com"}
+
+// audit ledger (keyed Unmasked)
+{"level":"information","message":"Charged 299.9 for john@example.com","Email":"john@example.com"}
+```
+
+- **It skips masking and nothing else.** The logging matrix still filters context fields and the
+  sanitizer still strips control characters — the matrix decides what is *noise*, the sanitizer
+  protects the sink's *integrity*; neither is about privacy.
+- **The application declares it, never the transport.** The key lives on the registration, so a
+  dependency cannot ship a sink that exempts itself.
+- **Forget the key and the sink is masked** — the failure lands on the safe side.
+- **No sl4n API to learn.** It is `AddKeyedSingleton`, with any lifetime or factory .NET supports.
+  There is no name matching involved, so there is no typo that could silently mask the one sink
+  that had to hold the evidence.
+
+> Send the unmasked entry somewhere that deserves it. A file or a console under this key defeats
+> the point of masking everywhere else.
+
 ---
 
 ## Context propagation
@@ -280,8 +319,9 @@ Declare named retention policies (compliance metadata), then tag the logs that m
 
 ```json
 "retentionPolicies": {
-  "SOX_AUDIT_TRAIL": { "days": 2555, "class": "SOX" },
-  "GDPR_STANDARD":   { "days": 365,  "class": "GDPR" }
+  "SOX_AUDIT_TRAIL": { "years": 7,   "class": "SOX" },
+  "GDPR_STANDARD":   { "months": 12, "class": "GDPR" },
+  "OPS_SHORT":       { "days": 30,   "class": "ops" }
 }
 ```
 
@@ -289,11 +329,80 @@ Declare named retention policies (compliance metadata), then tag the logs that m
 using (logger.BeginRetentionScope("SOX_AUDIT_TRAIL"))
 {
     logger.LogInformation("Payment approved {Amount}", amount);
-    // → { …, "retention": "SOX_AUDIT_TRAIL", "retentionClass": "SOX", "retentionDays": 2555 }
+    // → { …, "retention": "SOX_AUDIT_TRAIL", "retentionClass": "SOX",
+    //        "retentionDays": 0, "retentionUntil": "2033-08-23" }
 }
 ```
 
-The tag rides a MEL scope, so every log in the call chain inherits it. Retention metadata **bypasses the logging matrix** — it's a structural compliance stamp, not user context.
+The tag rides a MEL scope, so every log in the call chain inherits it. Retention metadata
+**bypasses the logging matrix** — it's a structural compliance stamp, not user context.
+
+### `retentionUntil` — the window, materialised
+
+`retentionUntil` is the date the window ends, computed **when the entry is written** and anchored to
+that entry's own timestamp. That makes a purge an indexable range scan:
+
+```sql
+DELETE FROM audit_log WHERE retention_until < CURRENT_DATE;
+```
+
+The sweeper needs to know nothing about policies, and records written under an older revision of a
+policy keep the window that was in force when they were written — revise the policy from 7 years to
+5 and yesterday's records are unaffected, because their date was already decided.
+
+### Pick the unit the window is actually expressed in
+
+Declare **exactly one** of `days`, `months`, `years`. Declaring two throws
+`Sl4nConfigurationException` at startup: an ambiguous compliance window has no safe default, and
+failing to boot is better than sweeping records on a date nobody chose.
+
+Prefer the calendar unit when the window is a calendar period. `days` is exact but drifts:
+
+| declared | from 2026-08-23 | |
+|---|---|---|
+| `"days": 2555` | 2033-08-21 | 7 × 365 — misses two leap days |
+| `"years": 7` | 2033-08-23 | seven actual years |
+
+And the arithmetic rounds **long, on purpose**. .NET's `AddMonths`/`AddYears` clamp to the last day
+of a short target month — 31-Jan + 1 month gives 28-Feb — which ends the window up to three days
+early. sl4n rolls forward instead (31-Jan + 1 month → 3-Mar). Keeping a record slightly too long is
+a housekeeping matter; deleting it early is the finding an auditor writes up.
+
+A policy that declares no unit still stamps `retention` and `retentionClass`, and simply omits
+`retentionUntil` — as does an entry with no timestamp to anchor to. The field is left out rather
+than guessed.
+
+### Resolving a policy outside the logger
+
+Your domain write path probably stores the retention class in its own column, and it should not have
+to go through a logger to ask what that class means. `RetentionRegistry` is a registered service —
+inject it:
+
+```csharp
+public sealed class InvoiceRepository(RetentionRegistry retention)
+{
+    public async Task SaveAsync(Invoice invoice)
+    {
+        DateOnly? until = retention.Until("SOX_AUDIT_TRAIL", DateTimeOffset.UtcNow);
+        await _db.InsertAsync(invoice, retentionUntil: until);
+    }
+}
+```
+
+Same registry, same arithmetic, same answer the log line carries — so the record's own column and
+its audit trail cannot disagree about when it expires.
+
+| member | |
+|---|---|
+| `Resolve(name)` | the policy, or throws `RetentionPolicyNotFoundException` listing what *is* registered |
+| `TryResolve(name, out policy)` | for callers where a miss is a branch, not a bug |
+| `Until(name, at)` | the end of the window, as a `DateOnly?` |
+| `Policies` | the whole frozen registry |
+
+`Resolve` throws rather than returning null on purpose. The caller is deciding how long to keep a
+record; a null there persists it with **no retention at all** — a gap found at audit time instead of
+at deploy time. The registry is immutable once built: it copies what you hand it, so neither a
+downcast nor an edit to your original dictionary can redefine a window for records already written.
 
 ---
 
@@ -446,7 +555,9 @@ It is a structured-logging and context-propagation framework. It is **not** a lo
 | **Context propagation** | Conceptual↔wire header translation via `AsyncLocal` | `Sl4nContext`, `ContextConfig` |
 | **ASP.NET Core middleware** | Extract inbound context + open MEL scope per request | `sl4n.AspNetCore`, `app.UseSl4n()` |
 | **Outbound propagation** | Inject wire headers on outgoing `HttpClient` calls | `Sl4nDelegatingHandler` |
-| **Retention** | Compliance tags stamped on entries, bypassing the matrix | `Sl4nRetention.BeginRetentionScope`, `RetentionPolicy` |
+| **Retention** | Compliance tags plus a materialised `retentionUntil`, bypassing the matrix | `Sl4nRetention.BeginRetentionScope`, `RetentionPolicy` |
+| **Retention off the log path** | Same window, resolved from your own write path | `RetentionRegistry.Resolve` / `.Until` / `.Policies` |
+| **Unmasked audit sink** | One sink receives values before masking, declared with keyed DI | `Sl4nTransportKeys.Unmasked` |
 | **Transports** | JSON + classic console; write your own `ITransport` | `ConsoleTransport`, `ClassicConsoleTransport` |
 | **Durable buffer** | Self-emptying disk spool that survives outages | `DurableFileTransport` |
 | **Silent-observer safety** | Sanitization + transport isolation + never-throw masking | (pipeline) |
@@ -460,8 +571,28 @@ It is a structured-logging and context-propagation framework. It is **not** a lo
 
 ```bash
 dotnet test tests/sl4n.Tests/sl4n.Tests.csproj
-dotnet run --project benchmarks/sl4n.Benchmarks --configuration Release -- --filter '*ComparativeBenchmark*'
+dotnet run --project benchmarks/sl4n.Benchmarks --configuration Release -- --filter '*WorkerBuildBenchmark*'
 ```
+
+`WorkerBuildBenchmark` is the one that times the pipeline itself. `ComparativeBenchmark` and
+`Sl4nLoggerBenchmark` time `ILogger.Log`, which only writes to the channel — the worker drains on
+another thread, so nothing downstream of it shows up there.
+
+### Hooks
+
+The repo ships its gate as git hooks. One command per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+**pre-commit** builds and runs the suite (~15 s). **pre-push** adds the NativeAOT smoke: it
+publishes a real consumer app and *executes* the binary (~10 s more). Compiling proves it links;
+running proves masking, keyed DI and the whole pipeline work with no JIT and no reflection.
+
+The three published projects build with `TreatWarningsAsErrors`. A missing XML doc on a public
+member, or an AOT/trim warning, fails the build rather than joining a pile nobody reads. Tests and
+benchmarks are deliberately not strict.
 
 ---
 

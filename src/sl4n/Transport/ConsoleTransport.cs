@@ -4,8 +4,14 @@ using System.Text.Json;
 
 namespace Sl4n;
 
+/// <summary>
+/// The default transport: one JSON object per line on stdout, written with <c>Utf8JsonWriter</c> —
+/// no reflection, no serializer configuration, AOT-safe. This is what a log shipper expects. For
+/// human-readable local output see <see cref="ClassicConsoleTransport"/>.
+/// </summary>
 public sealed class ConsoleTransport : ITransport
 {
+    /// <summary>Writes the entry as a single JSON line.</summary>
     public void Log(IReadOnlyDictionary<string, object?> entry)
     {
         ArrayBufferWriter<byte> buffer = new(256);

@@ -6,6 +6,124 @@ All notable changes to **sl4n** are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-08-23
+
+Additive throughout — nothing existing changes shape, no migration needed. Three features that
+close long-standing parity gaps with the Node reference, plus the tooling that keeps the build
+honest.
+
+### Added
+
+- **Masking exemption per sink — the audit trail gets the truth (1.1.0).** Masking runs once before
+  the transport loop, so until now every sink received the same redacted entry. That is right for
+  consoles and APMs and wrong for exactly one: the audit ledger, where `j**n@example.com` proves
+  nothing. A sink registered under `Sl4nTransportKeys.Unmasked` now receives the values as they
+  arrived, plus MEL's own message instead of the re-rendered one.
+
+  The exemption is **keyed DI**, not an sl4n API: `AddKeyedSingleton<ITransport>(Sl4nTransportKeys.Unmasked, sink)`.
+  The JS reference matches exempt sinks by name and therefore needs an `UnknownExemptTransportError`
+  to catch a typo that would silently mask the one sink holding the evidence. Here the framework
+  keeps the two groups apart on its own — keyed services do not come back from `GetServices<T>()` —
+  so that failure cannot be expressed. Forgetting the key masks the sink, which errs safe.
+
+  It skips masking and **nothing else**: the logging matrix still filters context fields and the
+  sanitizer still strips control characters. Both are pinned by test.
+
+  Cost when unused is zero: the second projection is allocated only if a sink is registered under
+  the key. The state is enumerated **exactly once** either way — it is a lazy reference that can
+  hang off a disposed request scope, so a re-enumeration would drop the entry for every sink, not
+  just the exempt one. Pinned by `LazyState_IsEnumeratedExactlyOnce_WithExemptSink`.
+
+  Verified under Native AOT by publishing and **executing** the smoke binary, which now asserts both
+  sides: no cleartext on the console, cleartext in the keyed sink.
+
+  **Measured, not assumed.** The change unified the masking loop (per-key `MaskOne` instead of the
+  lazy `Apply` projection) so the state is read once. On an Apple M2 that made the masked path
+  **8% faster and 88 B lighter per entry** — the LINQ iterator and its capturing closure are gone.
+  The exempt sink costs 65 ns and **zero extra allocation** on top. Numbers come from the new
+  `WorkerBuildBenchmark`; the pre-existing benchmarks could not see any of this (see below).
+
+- **`retentionUntil` — the compliance window materialised at write time (1.1.0).** An entry tagged
+  with a retention policy now also carries the date its window ends, so a purge is an indexable
+  range scan (`WHERE retention_until < CURRENT_DATE`) instead of a computed expression, and records
+  filed under an older revision of a policy keep the window that was in force when they were
+  written. `retentionDays` stays; nothing that reads it breaks.
+
+  `RetentionPolicy` gained **`Months`** and **`Years`** alongside `Days`. Declare exactly one:
+  declaring two throws the new `Sl4nConfigurationException` **at startup**, never from the logging
+  path. An ambiguous compliance window has no safe default, and a host that refuses to boot is
+  better than records swept on a date nobody chose. This is the library's first `throw` anywhere,
+  and it is deliberately confined to service construction.
+
+  **The arithmetic rounds long, on purpose.** .NET's `AddMonths`/`AddYears` clamp to the last day of
+  a short target month — 31-Jan + 1 month gives 28-Feb — which ends a window up to three days early,
+  the exact failure retention exists to prevent. sl4n rolls forward (31-Jan + 1 month → 3-Mar),
+  matching the JS sibling. Pinned by test across every short month and both leap-day cases.
+
+  Prefer the calendar unit: `days` is exact but drifts. `2555` — the value this README used to
+  show for SOX — is 7 × 365 and misses two leap days, ending two days before seven actual years.
+
+  Anchored to the **event's own timestamp**, not to the clock the worker reads: the worker can be
+  seconds behind under backlog, and a window that moved with queue depth would not be reproducible
+  from the entry. No timestamp and no declared unit both mean the field is omitted, never guessed.
+
+  Emitted as an ISO `yyyy-MM-dd` string rather than a `DateOnly`, because the JSON transport would
+  have formatted a bare `DateOnly` with the server's culture — `8/23/2033` in `en-US`, `23/8/2033`
+  in `es-AR`. Pinned by test under three cultures.
+
+  Cost, measured with `WorkerBuildBenchmark`: +93 ns and +72 B on entries whose policy resolves;
+  every other path is unchanged within noise.
+
+- **Resolve a retention policy without going through a logger (1.1.0).** A domain write path that
+  persists the retention class in its own column now gets the same answer the logger stamps, from
+  the same registry and the same arithmetic. `RetentionRegistry` — already public and already
+  registered in DI — gained:
+
+  - `Policies` — the frozen registry, enumerable.
+  - `Resolve(name)` — throws `RetentionPolicyNotFoundException` (carrying the name and the sorted
+    available ones) instead of returning null. The caller is deciding how long to keep a record; a
+    null there persists it with no retention at all, discovered at audit time rather than deploy
+    time. `TryResolve` stays for callers where a miss is a branch, not a bug.
+  - `Until(name, at)` — the same `retentionUntil` the logging path stamps.
+
+  The registry is now genuinely immutable. `IReadOnlyDictionary` does not make a map read-only: a
+  downcast to `IDictionary` brings the mutators back, and a caller who kept the dictionary it passed
+  in could edit it afterwards. Either route could redefine a compliance window for records already
+  written under the old one. It copies on construction and exposes a real `ReadOnlyDictionary`;
+  both routes have a test.
+
+- **`llms.txt`** — the compact API contract for code-generating agents, mirroring the Node
+  sibling's. Every fact in it was checked against the source or its test, including the two that
+  are easy to get wrong from memory: a configured matrix with no `default` drops all context on an
+  unlisted level, and the dictionary handed to `ITransport.Log` is reused across entries. Ships
+  inside the `sl4n` package, so an agent resolving it from NuGet gets the contract without cloning.
+
+### Changed — internal
+
+- **The published projects build with zero warnings, and stay that way.** The 68 outstanding
+  `CS1591` warnings (public members with no XML doc) are gone — documented, not suppressed. The
+  three published projects now carry `TreatWarningsAsErrors`, so a missing doc on a public member or
+  an AOT/trim warning fails the build instead of joining a pile nobody reads. That pile was already
+  hiding things: a warning introduced earlier in this same release went unnoticed until the totals
+  were compared by hand. Tests and benchmarks are deliberately not strict.
+
+- **The gate ships as git hooks** (`.githooks/`, enabled with `git config core.hooksPath .githooks`).
+  pre-commit builds and runs the suite; pre-push adds the NativeAOT smoke — publish and *execute*,
+  because compiling only proves it links. Both were verified to fail on a broken tree, not just to
+  pass on a clean one.
+
+### Added — internal
+
+- **`WorkerBuildBenchmark` — the pipeline is finally measurable.** Every existing benchmark timed
+  `logger.LogInformation(...)`, which snapshots the scope and writes to the channel; the worker
+  drains on another thread, so masking, matrix filtering, sanitization and the message re-render
+  never entered a number — including under the `*ComparativeBenchmark*` filter CI runs on `main`.
+  It also read backwards: a slower worker fills the channel sooner, `DropOldest` starts discarding,
+  and the logger call gets *faster*, so a pipeline regression could show up as a benchmark win.
+  The new benchmark times `Build()` over one event with no channel and no transports.
+
+[1.1.0]: https://github.com/Syntropysoft/sl4n/releases/tag/v1.1.0
+
 ## [1.0.6] — 2026-08-08
 
 Documentation only — **no API or behavior changes**. Ship the 1.0.5 fixes with a NuGet-safe README.

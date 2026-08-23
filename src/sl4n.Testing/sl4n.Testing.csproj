@@ -4,11 +4,15 @@
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- The published surface builds clean, and stays that way: a warning here is a missing doc on
+         a public member, or an AOT/trim warning, and both are defects in a library whose selling
+         point is being documented and AOT-safe. Tests and benchmarks are deliberately NOT strict. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <LangVersion>latest</LangVersion>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
 
     <PackageId>sl4n.Testing</PackageId>
-    <Version>1.0.6</Version>
+    <Version>1.1.0</Version>
     <PackageReleaseNotes>1.0.6 - docs only: NuGet-safe README (plain Markdown header, no logo). Ships the 1.0.5 fixes: the log message no longer leaks masked values, DisposeAsync is idempotent so a clean host shutdown no longer throws, plus durable-transport outage callbacks and faster masking. See CHANGELOG.md.</PackageReleaseNotes>
     <Authors>Syntropy</Authors>
     <Company>Syntropy</Company>

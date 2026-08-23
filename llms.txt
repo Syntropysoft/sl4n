@@ -1,0 +1,292 @@
+# sl4n — Syntropy Log for .NET
+
+> Log pipeline for .NET (net8.0+) riding on `Microsoft.Extensions.Logging`. One declarative
+> configuration governs every log: correlation context, per-level field whitelisting, PII masking,
+> sanitization, retention metadata and delivery. Everything is DI-registered and NativeAOT-safe —
+> source-generated regexes, `Utf8JsonWriter`, no reflection on the log path.
+> Logging never throws: failures are isolated, counted in `Sl4nStats` and surfaced through hooks.
+
+This file is the compact contract for code-generating agents. Prose and rationale live in
+README.md; every fact below is the API as it ships. Three packages, always released together:
+`sl4n`, `sl4n.AspNetCore`, `sl4n.Testing`.
+
+## Install & wire up
+
+```bash
+dotnet add package sl4n
+```
+
+```csharp
+using Sl4n;
+
+// AOT-safe: configuration built in code, no binding, no reflection.
+services.AddSl4n(cfg => cfg.Masking.EnableDefaultRules = true);
+
+// Or bind from appsettings — NOT AOT-safe (binding uses reflection).
+services.AddSl4n(configuration.GetSection(Sl4nConfig.SectionName));
+```
+
+Then log through plain MEL. There is no sl4n logger type to learn:
+
+```csharp
+ILogger<T> log = /* injected */;
+log.LogInformation("Card charged {Amount} for {Email}", 299.9m, "john@example.com");
+// → {"timestamp":"…","level":"information","category":"T",
+//    "message":"Card charged 299.9 for j**n@example.com",
+//    "Amount":299.9,"Email":"j**n@example.com"}
+```
+
+- `AddSl4n` replaces existing logging providers (`ClearProviders()`), registers the pipeline, the
+  channel, the transport worker (as a singleton AND its own `IHostedService`), and a default
+  `ConsoleTransport`.
+- Nothing is async to start. The worker begins draining when the host starts.
+- Log levels are **MEL's own** — `Trace|Debug|Information|Warning|Error|Critical`. The JS sibling's
+  `audit`/`fatal` aliases do not exist here; there is no always-on level (open roadmap item).
+
+### `Sl4nConfig` — the whole shape
+
+Every member is optional.
+
+```csharp
+services.AddSl4n(cfg =>
+{
+    cfg.Masking.EnableDefaultRules = true;      // email, password, token, card, ssn, phone
+    cfg.Masking.Rules = [ new MaskingRuleConfig { Pattern = "^(cvv|cvc)$",
+                                                  Strategy = MaskingStrategy.FullMask } ];
+    cfg.Masking.RegexTimeoutMs = 100;           // real ReDoS timeout; <=0 disables
+    cfg.Masking.OnMaskingError = (ex, key) => { };
+
+    cfg.Context.Source = "frontend";
+    cfg.Context.Inbound  = new() { ["frontend"] = new() { ["correlationId"] = "X-Correlation-Id" } };
+    cfg.Context.Outbound = new() { ["http"]     = new() { ["correlationId"] = "X-Correlation-Id" } };
+    cfg.Context.AutoGenerate = ["correlationId"];   // UUID when the header is absent
+    cfg.Context.ResponseTarget = "response";        // "" disables response headers
+
+    cfg.LoggingMatrix = new MatrixBuilder()
+        .Default("correlationId")
+        .Level(LogLevel.Information, "correlationId", "userId")
+        .All(LogLevel.Error)
+        .Build();
+
+    cfg.RetentionPolicies = new() { ["SOX_AUDIT_TRAIL"] = new() { Years = 7, Class = "SOX" } };
+
+    cfg.OnLogFailure = (ex, transportTypeName) => { };
+});
+```
+
+## Emitted entry
+
+Always: `timestamp` (ISO-8601 round-trip, omitted if the event has none), `level` (lowercase MEL
+name), `category`, `message`. Then per-call structured state (masked), context/scope fields
+(filtered by the matrix, never masked), `exception` (full `ToString()`, not sanitized — its
+newlines carry the stack trace), and retention metadata when tagged.
+
+**The dictionary handed to `ITransport.Log` is REUSED across entries.** Copy it if you keep it.
+
+## Masking
+
+By **field NAME**, never by value contents, first matching rule wins. Runs once before the transport
+loop.
+
+| Default rule keys | Strategy | Result |
+|---|---|---|
+| `email`, `mail` | Email | `j**n@example.com` |
+| `password`, `pass`, `pwd`, `secret` | FullMask | `*******` |
+| `token`, `key`, `auth`, `jwt`, `bearer` | FullMask | `*******` |
+| `credit_card`, `creditcard`, `card_number`, `cardnumber` | LastFour | `************1234` |
+| `ssn`, `social_security` | LastFour | `*****6789` |
+| `phone`, `mobile`, `tel` | LastFour | `******4567` |
+
+- `MaskKeys.Email/Password/Token/Card/Ssn/Phone/All` are the key arrays; `MaskKeys.Pattern(keys)`
+  builds `^(a|b|c)$`. Use them instead of string literals to keep secret scanners quiet.
+- `MaskingPatterns.EmailField()` etc. are the source-generated regexes behind the defaults.
+- A **non-string** under a sensitive key is redacted whole (`[REDACTED]`) — never stringified first.
+- Masking is **flat**: it does not deep-walk nested object graphs. Documented salvedad, not a gap.
+- `MaskingStrategy.Custom` from configuration cannot carry a function, so it degrades to `FullMask`
+  (over-mask). Construct a `MaskingRule` directly to supply one.
+- **The message is re-rendered from masked values** when any state key is maskable — MEL
+  pre-formats it with raw values, so otherwise `"charged {Email}"` would leak in `message`. Entries
+  with no maskable key keep MEL's formatting byte-for-byte; re-rendered ones lose custom format
+  specifiers.
+- `RegexTimeoutMs` is a **real** timeout here (`RegexMatchTimeoutException`), unlike the JS sibling
+  where the field is inert. A timeout redacts fail-secure and fires `OnMaskingError`.
+
+### One sink that receives values unmasked
+
+```csharp
+services.AddKeyedSingleton<ITransport>(Sl4nTransportKeys.Unmasked, new AuditLedgerTransport());
+```
+
+Plain keyed DI — sl4n only supplies the key (`"sl4n:unmasked"`). That sink gets the raw values and
+MEL's original message; every other sink is unaffected.
+
+- Skips **masking only**. The matrix still filters context fields and the sanitizer still strips
+  control characters.
+- Declared by the application at registration, so a transport cannot exempt itself.
+- Forget the key and the sink is masked — the failure lands on the safe side.
+- Costs nothing when unused: the second projection is only built if the key is registered.
+
+## Retention
+
+```csharp
+using (logger.BeginRetentionScope("SOX_AUDIT_TRAIL"))
+    logger.LogInformation("Payment approved {Amount}", amount);
+// → …, "retention":"SOX_AUDIT_TRAIL", "retentionClass":"SOX",
+//      "retentionDays":0, "retentionUntil":"2033-08-23"
+```
+
+`RetentionPolicy` = `{ Days, Months, Years, Class }`. Declare **exactly one** unit — two throws
+`Sl4nConfigurationException` while services are built (startup, never the log path).
+
+- `retentionUntil` is materialised at write time and anchored to the **event's own timestamp**, so a
+  purge is an indexable range scan and records keep the window in force when they were written.
+- **The arithmetic rounds long on purpose.** .NET's `AddMonths`/`AddYears` clamp to the last day of a
+  short month (31-Jan + 1 month → 28-Feb), ending a window up to three days early. sl4n rolls
+  forward (→ 3-Mar).
+- `days` is exact but drifts on calendar windows: `2555` is 7 × 365 and lands two days before seven
+  actual years. Prefer `Years`/`Months`.
+- No unit declared, or no timestamp on the event ⇒ `retentionUntil` is **omitted**, never guessed.
+- Retention metadata bypasses the logging matrix. An unregistered name emits `retention` alone.
+- The raw scope key (`Sl4nRetention.Field` = `"__retention"`) is consumed, never emitted.
+
+### Resolving off the log path
+
+`RetentionRegistry` is a registered singleton — inject it.
+
+| Member | Behaviour |
+|---|---|
+| `Resolve(name)` | policy, or throws `RetentionPolicyNotFoundException` (`PolicyName`, sorted `AvailablePolicies`) |
+| `TryResolve(name, out policy)` | `false` on a miss, no throw |
+| `Until(name, at)` | `DateOnly?` — same answer the logger stamps. Throws on unknown name |
+| `Policies` | the frozen registry |
+
+Immutable once built: it copies what you pass, so neither a downcast of `Policies` nor an edit to
+your original dictionary can redefine a window.
+
+## Logging Matrix
+
+Per-level whitelist of **context/scope** fields. Per-call structured state is never filtered.
+
+```csharp
+cfg.LoggingMatrix = new MatrixBuilder()
+    .Default("correlationId")                                  // fallback for unlisted levels
+    .Level(LogLevel.Information, "correlationId", "userId")
+    .All(LogLevel.Error)                                       // "*" — every context field
+    .Build();
+```
+
+Keys are MEL level names plus `LoggingMatrix.DefaultKey` (`"default"`), case-insensitive;
+`LoggingMatrix.Wildcard` is `"*"`. **Not configured ⇒ everything passes. Configured but the level is
+unlisted and there is no `default` ⇒ all context is dropped** — always define `default`.
+
+## Context propagation
+
+Conceptual names (`correlationId`) are internal; the wire name is declared per source/target.
+
+```csharp
+using (Sl4nContext.Push(("correlationId", id)))  { /* every log in here carries it */ }
+Sl4nContext.Set("tenantId", "acme");                        // no scope to close
+Sl4nContext.Current;                                        // ImmutableDictionary
+Sl4nContext.ExtractInbound(headers, source, cfg.Context);   // headers keyed LOWERCASE
+Sl4nContext.GetPropagationHeaders("http", cfg.Context);     // for an outgoing call
+```
+
+`Sl4nFields` holds conventional names (`CorrelationId`, `TraceId`, `TenantId`,
+`Sources.Frontend/Partner`, `Targets.Http/Kafka/S3`). Backed by `AsyncLocal`.
+
+**ASP.NET Core:** `services.AddSl4nAspNetCore()` + `app.UseSl4n()` — place it **early**, anything
+logged before it has no correlation id. **Outgoing HTTP:** add `Sl4nDelegatingHandler` to the client.
+
+## Transports
+
+`ITransport` is the universal adapter: `void Log(IReadOnlyDictionary<string, object?> entry)`.
+
+| Type | |
+|---|---|
+| `ConsoleTransport` | default — one JSON line per entry via `Utf8JsonWriter` |
+| `ClassicConsoleTransport` | human-readable; `services.UseClassicConsole()` |
+| `DurableFileTransport` | wraps another transport; disk **buffer**, not an archive |
+| `SpyTransport` | in `sl4n.Testing` |
+
+```csharp
+services.UseTransport(t);   // replaces ALL registered transports
+services.AddTransport(t);   // adds alongside
+```
+
+- Called on the worker's single reader thread — no thread-safety needed, but be quick.
+- A throwing transport is isolated: counted in `Sl4nStats.TransportFailures`, reported through
+  `OnLogFailure(ex, transportTypeName)`, other sinks still receive the entry.
+- `DurableFileTransport(inner, spoolPath, onOutageStarted?, onBacklogDrained?, onCorruptLine?)`
+  spools only the undelivered backlog and deletes the file on drain. No rotation. Unbounded.
+
+## Observability
+
+`Sl4nStats.Snapshot()` → `Sl4nStatsSnapshot(LogsProcessed, TransportFailures, DroppedEntries,
+MaskingFailures)`. Resolve `Sl4nStats` from DI.
+
+**`DroppedEntries` counts only entries skipped because their lazy state was already disposed.** The
+channel is bounded (4096, `DropOldest`) and its drops are **not** counted today — known gap, see
+PARITY-ROADMAP.md.
+
+## Errors
+
+| Type | Thrown when |
+|---|---|
+| `Sl4nConfigurationException` | a retention policy declares more than one unit. At service construction — startup, never the log path |
+| `RetentionPolicyNotFoundException` | `Resolve`/`Until` with an unregistered name. Carries `PolicyName` and sorted `AvailablePolicies` |
+
+Nothing else in the library throws. A failure on the logging path is isolated, counted and hooked.
+
+## Testing
+
+```csharp
+SpyTransport spy = new();
+services.AddSl4n(cfg => { }).UseSpyTransport(spy);
+// spy.Entries, spy.Count, spy.Clear()
+// spy.AtLevel("information"), spy.WithField("Email", "j**n@example.com")
+// spy.AnyMessageContains("error", "timeout")
+```
+
+The worker drains **asynchronously**, so give it a moment or complete the channel before asserting.
+
+## Common mistakes
+
+```csharp
+// ❌ Keeping the dictionary after Log returns — the worker reuses it.
+public void Log(IReadOnlyDictionary<string, object?> e) => _list.Add(e);
+// ✅
+public void Log(IReadOnlyDictionary<string, object?> e) => _list.Add(new Dictionary<string, object?>(e));
+
+// ❌ Days for a calendar window: 2555 is 7×365, two days short of seven years.
+new RetentionPolicy { Days = 2555 }
+// ✅
+new RetentionPolicy { Years = 7 }
+
+// ❌ Two units — throws at startup, not at log time.
+new RetentionPolicy { Days = 30, Years = 7 }
+
+// ❌ Configuring a matrix without a default silently drops all context on unlisted levels.
+new MatrixBuilder().Level(LogLevel.Error, "correlationId").Build()
+// ✅
+new MatrixBuilder().Default("correlationId").Level(LogLevel.Error, "*").Build()
+
+// ❌ Expecting the message to hide PII you concatenated yourself.
+log.LogInformation($"charged {email}");     // interpolated by C#, sl4n never sees a field
+// ✅ pass it as a keyed field
+log.LogInformation("charged {Email}", email);
+
+// ❌ AddSl4n(IConfiguration) in a NativeAOT app — binding uses reflection.
+// ✅ AddSl4n(cfg => { … })
+
+// ❌ Expecting an "audit" level that bypasses thresholds. MEL levels only.
+```
+
+## Not in scope
+
+No backend clients (no Redis/HTTP/DB in the core — dependencies are `Microsoft.Extensions.*` only).
+No log shipping, rotation, storage or purging: sl4n stamps the metadata, your store acts on it. No
+OpenTelemetry integration despite the package tag (known gap). No `traceparent` parsing yet.
+
+## Docs
+
+README.md · CHANGELOG.md · PARITY-ROADMAP.md (parity contract with the Node reference, open gaps)
