@@ -105,15 +105,43 @@ listed here so they live in the roadmap like everything else:
       rather than an indexable column. See `docs/compliance.md` § *Where this framework's job ends*
       in the JS repo for the full argument.
 
+      **Platform trap — verified on .NET 10, and it inverts the invariant.** The reference rounds
+      *long* on every edge case, on purpose: ending a window early is the failure an auditor
+      punishes. .NET's built-in arithmetic rounds *short*.
+
+      | | JS (`setUTCMonth` / `setUTCFullYear`) | .NET (`AddMonths` / `AddYears`) |
+      |---|---|---|
+      | 31-Jan + 1 month | **3-Mar** — longer | **28-Feb** — shorter |
+      | 29-Feb + 7 years | **1-Mar** — longer | **28-Feb** — shorter |
+      | 29-Feb + 12 months | **1-Mar** — longer | **28-Feb** — shorter |
+
+      So materialising a date here is not "port the JS function". A naive `AddMonths` ends every
+      edge-case window one to three days early — code that looks correct and quietly produces the
+      exact failure the design exists to prevent. Whatever shape is chosen, the rounding has to be
+      overridden explicitly and pinned by a test, the way the JS side pins the rollover.
+
+      **What .NET brings that JS cannot**, and which may make the right answer here *better* than
+      the reference rather than merely different:
+
+      - `DateOnly` — a compliance window ends on a **date**, not an instant. JS has only `Date`.
+      - The unit can be years-XOR-months **at compile time** (required-one-of), instead of a union
+        the caller can still violate at runtime as in JS.
+      - `TimeProvider` makes write-time computation deterministic in tests without injecting clocks
+        by hand.
+
       Options, with their cost — **not decided, this is a maintainer call** because sl4n publishes
       three NuGet packages and the emitted shape is part of their contract:
 
-      1. **Declare it a salvedad.** Move it to *.NET salvedades* and stop treating it as a gap. Free.
-      2. **Add `retentionUntil` alongside** `retentionDays`, keeping both. Additive, minor, nobody
-         breaks, and consumers that want the range scan get it.
-      3. **Converge on the reference** — `years`/`months`, `retentionUntil`, deprecate
-         `retentionDays`. What a strict reading of the parity contract asks for, and **breaking**
-         across all three packages.
+      1. **Declare it a salvedad.** Move it to *.NET salvedades* and stop treating it as a gap. Free,
+         and defensible if the consumers here sweep on a duration.
+      2. **Add a materialised date alongside** `retentionDays`, keeping both. Additive, minor, nobody
+         breaks, and consumers that want the range scan get it. Needs the rounding override.
+      3. **Converge on the reference** — one unit, a materialised date, deprecate `retentionDays`.
+         What a strict reading of the parity contract asks for, and **breaking** across all three
+         packages.
+
+      Option 2 or 3 should use `DateOnly` and compile-time unit exclusivity rather than mirroring the
+      JS signature: parity is about the guarantee, not about the shape of the API.
 
 - [ ] **PackageTags honesty (priority)** — `sl4n.csproj` lists `opentelemetry` in `PackageTags`
       but no OTel integration exists anywhere in the code. Honest-positioning rule: remove the tag,
