@@ -4,6 +4,7 @@
 set -euo pipefail
 source "$(git rev-parse --show-toplevel)/.githooks/_gate.sh"
 
+[ "${SL4N_ALLOW_MAIN:-}" = "1" ] || refuse_on_main
 require_dotnet
 gate_build
 gate_tests

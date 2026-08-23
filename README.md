@@ -586,6 +586,10 @@ The repo ships its gate as git hooks. One command per clone:
 git config core.hooksPath .githooks
 ```
 
+Both hooks first refuse to run on `main`: it is the published branch and only moves through a
+merged PR. `git checkout main` for a tag leaves you sitting there, which is exactly how an
+accidental commit happens. Override for a genuine hotfix with `SL4N_ALLOW_MAIN=1`.
+
 **pre-commit** builds and runs the suite (~15 s). **pre-push** adds the NativeAOT smoke: it
 publishes a real consumer app and *executes* the binary (~10 s more). Compiling proves it links;
 running proves masking, keyed DI and the whole pipeline work with no JIT and no reflection.

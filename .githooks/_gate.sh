@@ -14,6 +14,19 @@ step() { printf '\033[1;34m▸ %s\033[0m\n' "$1"; }
 die()  { printf '\033[1;31m✗ %s\033[0m\n' "$1" >&2; exit 1; }
 ok()   { printf '\033[1;32m✓ %s\033[0m\n' "$1"; }
 
+# main is the published branch: it only ever moves through a merged PR, and the tag on it is what
+# publishes to NuGet. A commit made directly on it skips review, skips CI-on-a-PR, and is easy to
+# make by accident — `git checkout main && git pull` for a tag leaves you sitting on it.
+refuse_on_main() {
+  local branch
+  branch="$(git rev-parse --abbrev-ref HEAD)"
+  [ "$branch" = "main" ] || return 0
+  die "you are on main. Work happens on develop; main only moves through a merged PR.
+     git switch develop            # and redo the change there
+     git stash                     # if you already staged something
+   Override for a genuine hotfix:  SL4N_ALLOW_MAIN=1 git commit …"
+}
+
 require_dotnet() {
   command -v dotnet >/dev/null 2>&1 || die "dotnet not on PATH — cannot verify this change."
 }
