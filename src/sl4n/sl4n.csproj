@@ -39,6 +39,10 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="sl4n.Tests" />
+    <!-- The pipeline lives behind internal types (RawLogEvent, the worker ctor). Without this the
+         only measurable surface is logger.Log(), which just writes to the channel — see
+         WorkerBuildBenchmark. -->
+    <InternalsVisibleTo Include="sl4n.Benchmarks" />
   </ItemGroup>
 
   <ItemGroup>

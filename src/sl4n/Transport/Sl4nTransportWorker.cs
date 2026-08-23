@@ -124,6 +124,20 @@ public sealed class Sl4nTransportWorker : IHostedService, IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Runs the build pipeline for one event and hands back the buffer — measurement hook.
+    /// Channel and delivery are deliberately excluded: this is the only way to attribute cost to
+    /// the pipeline itself (matrix, retention, masking, sanitization, re-render, dual projection),
+    /// which a benchmark over ILogger.Log cannot see — that call only writes to the channel.
+    /// </summary>
+    internal IReadOnlyDictionary<string, object?> BuildOnly(in RawLogEvent e)
+    {
+        _dict.Clear();
+        _rawDict?.Clear();
+        Build(in e);
+        return _dict;
+    }
+
     private void Build(in RawLogEvent e)
     {
         string level = LevelName(e.Level);

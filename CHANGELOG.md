@@ -31,6 +31,22 @@ All notable changes to **sl4n** are documented here. This project adheres to
   Verified under Native AOT by publishing and **executing** the smoke binary, which now asserts both
   sides: no cleartext on the console, cleartext in the keyed sink.
 
+  **Measured, not assumed.** The change unified the masking loop (per-key `MaskOne` instead of the
+  lazy `Apply` projection) so the state is read once. On an Apple M2 that made the masked path
+  **8% faster and 88 B lighter per entry** — the LINQ iterator and its capturing closure are gone.
+  The exempt sink costs 65 ns and **zero extra allocation** on top. Numbers come from the new
+  `WorkerBuildBenchmark`; the pre-existing benchmarks could not see any of this (see below).
+
+### Added — internal
+
+- **`WorkerBuildBenchmark` — the pipeline is finally measurable.** Every existing benchmark timed
+  `logger.LogInformation(...)`, which snapshots the scope and writes to the channel; the worker
+  drains on another thread, so masking, matrix filtering, sanitization and the message re-render
+  never entered a number — including under the `*ComparativeBenchmark*` filter CI runs on `main`.
+  It also read backwards: a slower worker fills the channel sooner, `DropOldest` starts discarding,
+  and the logger call gets *faster*, so a pipeline regression could show up as a benchmark win.
+  The new benchmark times `Build()` over one event with no channel and no transports.
+
 
 ## [1.0.6] — 2026-08-08
 
