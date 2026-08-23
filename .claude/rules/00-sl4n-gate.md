@@ -48,6 +48,12 @@ que atrapa lo que el build no ve.
   serialización en runtime; source-gen o nada.
 - ❌ NEVER divergir del modelo de la referencia Node sin registrarlo. ✅ ALWAYS actualizar
   `PARITY-ROADMAP.md`: es el contrato de paridad de este puerto.
+- ❌ NEVER introducir un mecanismo propio para algo que .NET/MEL ya resuelve. ✅ ALWAYS acoplar la
+  feature al punto de extensión estándar — DI keyed, `IOptions`/`IOptionsMonitor`, `Activity`,
+  `TimeProvider`, scopes de MEL — de modo que se configure **desde donde el usuario ya configura**.
+  sl4n aporta el resultado, no el mecanismo: acá no se re-implementa lo del port de JS, se amplifica
+  lo que .NET ya trae. Y el acoplamiento **degrada**: si el mecanismo no está presente en tiempo de
+  ejecución, hay fallback — nunca una excepción.
 - ❌ NEVER que un fallo de logging escape al caller — la promesa "logging never throws" es de la
   familia, no solo del Node.
 - ❌ NEVER publicar un paquete sin los tres en la misma versión, si el cambio los cruza.
