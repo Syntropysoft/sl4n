@@ -22,6 +22,11 @@ Baseline before this work: 81 tests green, `dotnet 10.0.300`, target `net8.0`, A
 - **DI (`AddSl4n`)** instead of `init()` / global singleton.
 - `ITransport` **is** the "Universal Adapter".
 - **No native addon** — .NET already compiles native; the TS native/JS masking-parity bug does not apply.
+- **`RegexTimeoutMs` actually works here.** In JS the field is accepted and **inert** — V8 cannot
+  interrupt a running regex, so the reference rejects explosive patterns statically at `init()` and
+  says so rather than implying a guarantee it cannot keep. .NET's `Regex` honours a real timeout
+  (`RegexMatchTimeoutException`, see `MaskingEngine.cs`), so sl4n has a runtime backstop the
+  reference cannot have. A difference in our favour — keep it, and do not "align" it away.
 
 ---
 
@@ -142,6 +147,49 @@ listed here so they live in the roadmap like everything else:
 
       Option 2 or 3 should use `DateOnly` and compile-time unit exclusivity rather than mirroring the
       JS signature: parity is about the guarantee, not about the shape of the API.
+
+- [ ] **Masking exemption per sink — the audit trail needs the truth.** JS 1.5.0 added
+      `masking.exemptTransports`: masking runs once before the transport loop, so every sink gets
+      the same obfuscated entry, which is right for consoles and APMs and wrong for exactly one —
+      the audit ledger, where `2*****9` proves nothing. sl4n has no equivalent: `MaskingConfig` is
+      `EnableDefaultRules` / `Rules` / `RegexTimeoutMs`, and nothing can opt a sink out.
+
+      **.NET can do this better than the reference.** JS matches exempt sinks by **name**, which is
+      why it needs `UnknownExemptTransportError` — a typo would silently mask the one sink that had
+      to hold evidence. Here `ITransport` is already the adapter and registration goes through DI, so
+      the exemption can be a typed marker on the registration instead of a string list. The whole
+      typo failure class disappears rather than being caught at startup.
+
+      Keep the rest of the reference's rule: the exemption is declared by the **application**, never
+      by a transport about itself — a dependency must not be able to ship a sink that exempts
+      itself — and everything else still applies to the exempt output (truncation, depth caps).
+
+- [ ] **Retention policy versioning — provenance, not computation.** JS 2.0.0 added
+      `retention: { version, emitRules }`: with `emitRules` on, the full rules ride on the entry
+      under `retentionRules`, stamped `policyVersion`. sl4n's `RetentionPolicy` is `{ Days, Class }`
+      — no version anywhere, and no way to say which revision a record was filed under.
+
+      Worth being precise about what this is *not* for. The non-linear purge already works here:
+      because `retentionDays` is stamped at write time, records filed under a policy later revised
+      from 36 to 42 to 12 months each keep the window in force when they were written, and no sweep
+      has to reconstruct which revision applied. Versioning does not fix that — it is **provenance**,
+      for the auditor asking under which revision a given record was filed. Registries get re-seeded;
+      without the stamp a persisted rule cannot say which one it came from.
+
+      Scope the emission the same way: off by default, because an in-process consumer resolves the
+      class at write time (see the next item) and only an **out-of-process** reader — a shipper
+      parsing JSON with no registry — needs the rules on the entry.
+
+- [ ] **Resolve a policy without a logger.** JS 2.0.0 added `getRetentionPolicy(name)`,
+      `getRetentionPolicies()` and `getRetentionUntil(name, at)` so a domain write path that
+      persists the retention class in its own column gets the same answer the logger got, against
+      the same frozen registry, at write time. sl4n has `RetentionRegistry` but nothing public that
+      resolves against it outside the logging path.
+
+      **DI makes this cleaner here than in JS.** The reference bolted accessors onto a global facade;
+      sl4n can expose the registry as an injectable read-only service, which is the idiomatic answer
+      and needs no singleton. Same guarantee — one registry, one answer, whichever way it is asked —
+      with a loud failure on an unregistered name rather than a silent null.
 
 - [ ] **PackageTags honesty (priority)** — `sl4n.csproj` lists `opentelemetry` in `PackageTags`
       but no OTel integration exists anywhere in the code. Honest-positioning rule: remove the tag,
