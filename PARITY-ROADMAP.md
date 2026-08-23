@@ -278,6 +278,17 @@ listed here so they live in the roadmap like everything else:
       No test covers it either: all six worker harnesses build the channel with
       `Channel.CreateUnbounded`, so the production bounded path is never exercised.
 
+- [ ] **Two High advisories in the dev-only projects** (found at the 1.1.0 release pre-flight,
+      2026-08-23). `dotnet list package --vulnerable --include-transitive`:
+      `System.Text.Json 8.0.0` (High, GHSA-hh2w-p6rv-4g7w) pulled transitively into
+      `sl4n.Benchmarks`, and `System.Net.Http 4.3.0` (High, GHSA-7jgj-8wvc-jh57) into `sl4n.Tests`.
+
+      **The three published packages are clean** — verified per project — so nothing vulnerable ships
+      to a consumer and this did not block the release. But they are High, they are in the repo, and
+      nothing in CI would have told us: there is no vulnerability check in any workflow. Two things
+      to do: bump the transitive pins, and add `dotnet list package --vulnerable` to CI so the next
+      one is caught by the pipeline rather than by someone running a pre-flight by hand.
+
 - [ ] **PackageTags honesty (priority)** — `sl4n.csproj` lists `opentelemetry` in `PackageTags`
       but no OTel integration exists anywhere in the code. Honest-positioning rule: remove the tag,
       or build the feature (an `ITransport` emitting to an OTLP logger, per the JS README's

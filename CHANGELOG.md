@@ -6,6 +6,12 @@ All notable changes to **sl4n** are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-08-23
+
+Additive throughout — nothing existing changes shape, no migration needed. Three features that
+close long-standing parity gaps with the Node reference, plus the tooling that keeps the build
+honest.
+
 ### Added
 
 - **Masking exemption per sink — the audit trail gets the truth (1.1.0).** Masking runs once before
@@ -116,6 +122,7 @@ All notable changes to **sl4n** are documented here. This project adheres to
   and the logger call gets *faster*, so a pipeline regression could show up as a benchmark win.
   The new benchmark times `Build()` over one event with no channel and no transports.
 
+[1.1.0]: https://github.com/Syntropysoft/sl4n/releases/tag/v1.1.0
 
 ## [1.0.6] — 2026-08-08
 
