@@ -6,6 +6,11 @@ using Microsoft.Extensions.Logging;
 
 namespace Sl4n;
 
+/// <summary>
+/// Drains the log channel and builds each entry — matrix filtering, retention stamping, masking,
+/// sanitization, message re-rendering — then hands it to every transport. Runs as a hosted service
+/// on a single reader thread, off the caller's path.
+/// </summary>
 public sealed class Sl4nTransportWorker : IHostedService, IAsyncDisposable
 {
     private readonly ChannelReader<RawLogEvent>  _reader;
@@ -48,12 +53,14 @@ public sealed class Sl4nTransportWorker : IHostedService, IAsyncDisposable
         _onLogFailure = onLogFailure;
     }
 
+    /// <summary>Starts draining the channel.</summary>
     public Task StartAsync(CancellationToken cancellationToken)
     {
         _executeTask = RunAsync(_cts.Token);
         return Task.CompletedTask;
     }
 
+    /// <summary>Signals the drain loop to stop and waits for it, up to <paramref name="cancellationToken"/>.</summary>
     public async Task StopAsync(CancellationToken cancellationToken)
     {
         _cts.Cancel();
@@ -61,6 +68,7 @@ public sealed class Sl4nTransportWorker : IHostedService, IAsyncDisposable
         catch (OperationCanceledException) { }
     }
 
+    /// <summary>Stops the drain loop and releases the cancellation source. Idempotent — see below.</summary>
     public async ValueTask DisposeAsync()
     {
         // Idempotent: the worker is registered both as a singleton and as its own

@@ -68,6 +68,20 @@ All notable changes to **sl4n** are documented here. This project adheres to
   Cost, measured with `WorkerBuildBenchmark`: +93 ns and +72 B on entries whose policy resolves;
   every other path is unchanged within noise.
 
+### Changed — internal
+
+- **The published projects build with zero warnings, and stay that way.** The 68 outstanding
+  `CS1591` warnings (public members with no XML doc) are gone — documented, not suppressed. The
+  three published projects now carry `TreatWarningsAsErrors`, so a missing doc on a public member or
+  an AOT/trim warning fails the build instead of joining a pile nobody reads. That pile was already
+  hiding things: a warning introduced earlier in this same release went unnoticed until the totals
+  were compared by hand. Tests and benchmarks are deliberately not strict.
+
+- **The gate ships as git hooks** (`.githooks/`, enabled with `git config core.hooksPath .githooks`).
+  pre-commit builds and runs the suite; pre-push adds the NativeAOT smoke — publish and *execute*,
+  because compiling only proves it links. Both were verified to fail on a broken tree, not just to
+  pass on a clean one.
+
 ### Added — internal
 
 - **`WorkerBuildBenchmark` — the pipeline is finally measurable.** Every existing benchmark timed

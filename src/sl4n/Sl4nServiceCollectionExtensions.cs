@@ -9,8 +9,13 @@ using Microsoft.Extensions.Options;
 
 namespace Sl4n;
 
+/// <summary>Registers sl4n: the pipeline, the transport worker and the MEL provider.</summary>
 public static class Sl4nServiceCollectionExtensions
 {
+    /// <summary>
+    /// Registers sl4n, binding <see cref="Sl4nConfig"/> from configuration. Binding uses reflection,
+    /// so this overload is NOT Native AOT compatible — use the <see cref="Action{T}"/> one there.
+    /// </summary>
     [RequiresUnreferencedCode("Configuration binding uses reflection. Use the Action<Sl4nConfig> overload for AOT compatibility.")]
     [RequiresDynamicCode("Configuration binding may require dynamic code generation. Use the Action<Sl4nConfig> overload for AOT compatibility.")]
     public static IServiceCollection AddSl4n(
@@ -21,6 +26,10 @@ public static class Sl4nServiceCollectionExtensions
         return services.AddSl4nCore();
     }
 
+    /// <summary>
+    /// Registers sl4n with configuration built in code. This is the AOT-safe overload: no binding,
+    /// no reflection.
+    /// </summary>
     public static IServiceCollection AddSl4n(
         this IServiceCollection services,
         Action<Sl4nConfig> configure)

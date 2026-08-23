@@ -14,6 +14,7 @@ public sealed class RetentionRegistry
     public static readonly RetentionRegistry Empty =
         new(new Dictionary<string, RetentionPolicy>());
 
+    /// <summary>Wraps an already-built policy map. <see cref="Create"/> is the validating entry point.</summary>
     public RetentionRegistry(IReadOnlyDictionary<string, RetentionPolicy> policies) => _policies = policies;
 
     /// <summary>

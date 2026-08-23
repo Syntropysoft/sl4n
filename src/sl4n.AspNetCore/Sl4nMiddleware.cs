@@ -5,17 +5,26 @@ using Microsoft.Extensions.Options;
 
 namespace Sl4n.AspNetCore;
 
+/// <summary>
+/// Extracts context fields from the inbound headers declared for <see cref="ContextConfig.Source"/>,
+/// generates the ones listed in <see cref="ContextConfig.AutoGenerate"/> that did not arrive, and
+/// opens a logging scope for the rest of the request — so every log in the call chain carries them
+/// with no call site involved. Optionally writes them back as response headers.
+/// </summary>
 public sealed class Sl4nMiddleware : IMiddleware
 {
     private readonly IOptions<Sl4nConfig>    _options;
     private readonly ILogger<Sl4nMiddleware> _logger;
 
+    /// <param name="options">The sl4n configuration, for the context maps.</param>
+    /// <param name="logger">Used to open the scope the request's logs inherit.</param>
     public Sl4nMiddleware(IOptions<Sl4nConfig> options, ILogger<Sl4nMiddleware> logger)
     {
         _options = options;
         _logger  = logger;
     }
 
+    /// <summary>Establishes the request context, then invokes the rest of the pipeline.</summary>
     public async Task InvokeAsync(HttpContext httpContext, RequestDelegate next)
     {
         ContextConfig context = _options.Value.Context;

@@ -1,5 +1,9 @@
 namespace Sl4n;
 
+/// <summary>
+/// PII masking, matched by field NAME and applied to every entry before it reaches any transport.
+/// A sink registered under <see cref="Sl4nTransportKeys.Unmasked"/> is the one exception.
+/// </summary>
 public sealed class MaskingConfig
 {
     /// <summary>

@@ -2,12 +2,20 @@ using System.Text.RegularExpressions;
 
 namespace Sl4n;
 
+/// <summary>
+/// One masking rule: a field-NAME pattern plus how to redact the values under it. Rules are matched
+/// against the key, never against the value's contents, and the first match wins.
+/// </summary>
 public sealed class MaskingRule
 {
     private readonly Regex                _keyPattern;
     private readonly MaskingStrategy      _strategy;
     private readonly Func<string, string>? _customMask;
 
+    /// <summary>Builds a rule.</summary>
+    /// <param name="keyPattern">Matched against the field name. Prefer <see cref="MaskingPatterns"/>' source-generated regexes.</param>
+    /// <param name="strategy">How to redact a matching value.</param>
+    /// <param name="customMask">Required when <paramref name="strategy"/> is <see cref="MaskingStrategy.Custom"/>. It must not throw; if it does, the field is redacted fail-secure and <c>OnMaskingError</c> fires.</param>
     public MaskingRule(Regex keyPattern, MaskingStrategy strategy, Func<string, string>? customMask = null)
     {
         _keyPattern = keyPattern;
@@ -15,8 +23,10 @@ public sealed class MaskingRule
         _customMask = customMask;
     }
 
+    /// <summary>True when this rule governs <paramref name="key"/>.</summary>
     public bool Matches(string key) => _keyPattern.IsMatch(key);
 
+    /// <summary>Redacts <paramref name="value"/> according to this rule's strategy.</summary>
     public string Apply(string value) => _strategy switch
     {
         MaskingStrategy.Email    => MaskEmail(value),

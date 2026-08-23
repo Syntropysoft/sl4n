@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Fast gate: nothing lands in a commit that does not build clean and pass the suite.
+# The AOT smoke is on pre-push instead — it takes ~40s and a commit should not.
+set -euo pipefail
+source "$(git rev-parse --show-toplevel)/.githooks/_gate.sh"
+
+require_dotnet
+gate_build
+gate_tests
+printf '\033[1;32m✓ pre-commit gate passed\033[0m\n'

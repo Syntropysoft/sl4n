@@ -2,6 +2,11 @@ using System.Text.RegularExpressions;
 
 namespace Sl4n;
 
+/// <summary>
+/// The field-name patterns behind the built-in masking rules, as source-generated regexes — no
+/// runtime compilation, AOT-safe, and linear (not subject to the ReDoS timeout). Public so you can
+/// reuse one when declaring a rule of your own.
+/// </summary>
 public static partial class MaskingPatterns
 {
     [GeneratedRegex(@"^(email|mail)$", RegexOptions.IgnoreCase)]

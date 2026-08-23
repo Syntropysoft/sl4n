@@ -3,6 +3,14 @@ using System.Text.RegularExpressions;
 
 namespace Sl4n;
 
+/// <summary>
+/// Applies the masking rules to a log entry's fields. Matching is by field NAME, first rule wins,
+/// and the per-key decision is cached — key names repeat across entries while values change, so the
+/// rule scan does not belong on the hot path.
+///
+/// It never throws: a custom-mask failure or a regex timeout redacts that field fail-secure and
+/// reports through the error hook.
+/// </summary>
 public sealed class MaskingEngine
 {
     /// <summary>Value substituted for a non-string under a sensitive key, or a masking failure.</summary>
@@ -27,12 +35,21 @@ public sealed class MaskingEngine
     // set, which is immutable after construction — so no invalidation is ever needed.
     private readonly ConcurrentDictionary<string, MaskingRule?> _decisionCache = new();
 
+    /// <summary>Builds an engine over an explicit rule list. Prefer <see cref="Create"/> to go through configuration.</summary>
+    /// <param name="rules">Evaluated in order; the first match wins. Immutable after construction.</param>
+    /// <param name="onMaskingError">Called with the exception and the field name when masking a field fails.</param>
     public MaskingEngine(IReadOnlyList<MaskingRule> rules, Action<Exception, string>? onMaskingError = null)
     {
         _rules          = rules;
         _onMaskingError = onMaskingError;
     }
 
+    /// <summary>
+    /// Builds an engine from configuration: the built-in rules when enabled, then the custom ones
+    /// on top, each compiled with the configured ReDoS timeout.
+    /// </summary>
+    /// <param name="config">The masking section.</param>
+    /// <param name="onMaskingError">Overrides <see cref="MaskingConfig.OnMaskingError"/> when supplied.</param>
     public static MaskingEngine Create(MaskingConfig config, Action<Exception, string>? onMaskingError = null)
     {
         List<MaskingRule> rules = new();
@@ -61,8 +78,11 @@ public sealed class MaskingEngine
         return new MaskingEngine(rules, onMaskingError ?? config.OnMaskingError);
     }
 
-    // Returns the input sequence unmodified when there are no rules (zero allocation).
-    // When rules exist, projects lazily — no intermediate List<T>.
+    /// <summary>
+    /// Projects <paramref name="state"/> with every value masked according to its key. Lazy: nothing
+    /// runs until the sequence is enumerated, and with no rules configured the input is returned
+    /// as-is, allocating nothing.
+    /// </summary>
     public IEnumerable<KeyValuePair<string, object?>> Apply(
         IEnumerable<KeyValuePair<string, object?>> state)
     {

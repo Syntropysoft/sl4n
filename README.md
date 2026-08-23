@@ -532,8 +532,28 @@ It is a structured-logging and context-propagation framework. It is **not** a lo
 
 ```bash
 dotnet test tests/sl4n.Tests/sl4n.Tests.csproj
-dotnet run --project benchmarks/sl4n.Benchmarks --configuration Release -- --filter '*ComparativeBenchmark*'
+dotnet run --project benchmarks/sl4n.Benchmarks --configuration Release -- --filter '*WorkerBuildBenchmark*'
 ```
+
+`WorkerBuildBenchmark` is the one that times the pipeline itself. `ComparativeBenchmark` and
+`Sl4nLoggerBenchmark` time `ILogger.Log`, which only writes to the channel — the worker drains on
+another thread, so nothing downstream of it shows up there.
+
+### Hooks
+
+The repo ships its gate as git hooks. One command per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+**pre-commit** builds and runs the suite (~15 s). **pre-push** adds the NativeAOT smoke: it
+publishes a real consumer app and *executes* the binary (~10 s more). Compiling proves it links;
+running proves masking, keyed DI and the whole pipeline work with no JIT and no reflection.
+
+The three published projects build with `TreatWarningsAsErrors`. A missing XML doc on a public
+member, or an AOT/trim warning, fails the build rather than joining a pile nobody reads. Tests and
+benchmarks are deliberately not strict.
 
 ---
 

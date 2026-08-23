@@ -9,6 +9,7 @@ namespace Sl4n;
 /// </summary>
 public sealed class ClassicConsoleTransport : ITransport
 {
+    /// <summary>Writes the entry as one human-readable line.</summary>
     public void Log(IReadOnlyDictionary<string, object?> entry)
     {
         entry.TryGetValue("timestamp", out object? ts);

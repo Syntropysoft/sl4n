@@ -5,6 +5,10 @@
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- The published surface builds clean, and stays that way: a warning here is a missing doc on
+         a public member, or an AOT/trim warning, and both are defects in a library whose selling
+         point is being documented and AOT-safe. Tests and benchmarks are deliberately NOT strict. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <LangVersion>latest</LangVersion>
     <IsAotCompatible>true</IsAotCompatible>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>

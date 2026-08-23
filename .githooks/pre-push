@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Full gate, the one the repo's ficha declares. Pushing is what makes a change other people's
+# problem, so this is where the AOT smoke runs: "NativeAOT-compatible" is executed, not claimed.
+set -euo pipefail
+source "$(git rev-parse --show-toplevel)/.githooks/_gate.sh"
+
+require_dotnet
+gate_build
+gate_tests
+gate_aot_smoke
+printf '\033[1;32m✓ pre-push gate passed — safe to push\033[0m\n'
