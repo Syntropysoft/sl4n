@@ -200,16 +200,29 @@ listed here so they live in the roadmap like everything else:
       class at write time (see the next item) and only an **out-of-process** reader — a shipper
       parsing JSON with no registry — needs the rules on the entry.
 
-- [ ] **Resolve a policy without a logger.** JS 2.0.0 added `getRetentionPolicy(name)`,
+- [x] **Resolve a policy without a logger.** ✅ DONE 2026-08-23. JS 2.0.0 added `getRetentionPolicy(name)`,
       `getRetentionPolicies()` and `getRetentionUntil(name, at)` so a domain write path that
       persists the retention class in its own column gets the same answer the logger got, against
       the same frozen registry, at write time. sl4n has `RetentionRegistry` but nothing public that
       resolves against it outside the logging path.
 
-      **DI makes this cleaner here than in JS.** The reference bolted accessors onto a global facade;
-      sl4n can expose the registry as an injectable read-only service, which is the idiomatic answer
-      and needs no singleton. Same guarantee — one registry, one answer, whichever way it is asked —
-      with a loud failure on an unregistered name rather than a silent null.
+      **DI made this cleaner here than in JS.** The reference bolted accessors onto a global facade;
+      sl4n exposes the registry as an injectable read-only service — no singleton, no facade.
+
+      **Correction to this entry as originally written** (it claimed nothing public resolved outside
+      the logging path): `RetentionRegistry` was already `public`, `TryResolve` was already `public`,
+      and it was already a registered singleton. What was actually missing, and is now there:
+      `Policies` (the frozen registry, enumerable), `Resolve(name)` which throws
+      `RetentionPolicyNotFoundException` carrying the name and the sorted available ones, and
+      `Until(name, at)` which reuses the same `RetentionWindow` the worker uses — so a domain write
+      path and the log line cannot disagree about when a record expires. `TryResolve` stays for
+      callers where a miss is a branch rather than a bug.
+
+      Writing the adversarial test paid for itself: `IReadOnlyDictionary` does **not** make a map
+      read-only — a downcast to `IDictionary` brings the mutators back, and a caller who kept the
+      dictionary it handed over could edit it afterwards. Both routes let a compliance window be
+      redefined for records already written under the old one. The registry now copies on
+      construction and exposes a real `ReadOnlyDictionary`; both routes have a test.
 
 - [x] **No benchmark covered the worker — the place where the pipeline actually runs.** ✅ DONE
       2026-08-22 (`WorkerBuildBenchmark` + the internal `BuildOnly` hook).
@@ -264,14 +277,6 @@ listed here so they live in the roadmap like everything else:
 
       No test covers it either: all six worker harnesses build the channel with
       `Channel.CreateUnbounded`, so the production bounded path is never exercised.
-
-- [ ] **Correct this document: the "resolve without a logger" gap is overstated.** The entry below
-      claims *"nothing public that resolves against it outside the logging path"*. Not so —
-      `RetentionRegistry` is `public sealed` (`RetentionRegistry.cs:9`), `TryResolve` is `public`
-      (`:28`), and it is registered as a singleton (`Sl4nServiceCollectionExtensions.cs:55`). A
-      consumer can inject it and resolve today. What is actually missing is enumerating the registry
-      (`getRetentionPolicies()`) and the materialised date (`getRetentionUntil`, which waits on the
-      retention-shape decision). Left as written, the item sends someone to build what exists.
 
 - [ ] **PackageTags honesty (priority)** — `sl4n.csproj` lists `opentelemetry` in `PackageTags`
       but no OTel integration exists anywhere in the code. Honest-positioning rule: remove the tag,

@@ -39,6 +39,9 @@
 
   <ItemGroup>
     <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    <!-- The compact API contract for code-generating agents. Ships in the package so an agent
+         resolving sl4n from NuGet gets it without cloning the repo. -->
+    <None Include="..\..\llms.txt" Pack="true" PackagePath="\" />
   </ItemGroup>
 
   <ItemGroup>

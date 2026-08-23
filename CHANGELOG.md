@@ -68,6 +68,30 @@ All notable changes to **sl4n** are documented here. This project adheres to
   Cost, measured with `WorkerBuildBenchmark`: +93 ns and +72 B on entries whose policy resolves;
   every other path is unchanged within noise.
 
+- **Resolve a retention policy without going through a logger (1.1.0).** A domain write path that
+  persists the retention class in its own column now gets the same answer the logger stamps, from
+  the same registry and the same arithmetic. `RetentionRegistry` — already public and already
+  registered in DI — gained:
+
+  - `Policies` — the frozen registry, enumerable.
+  - `Resolve(name)` — throws `RetentionPolicyNotFoundException` (carrying the name and the sorted
+    available ones) instead of returning null. The caller is deciding how long to keep a record; a
+    null there persists it with no retention at all, discovered at audit time rather than deploy
+    time. `TryResolve` stays for callers where a miss is a branch, not a bug.
+  - `Until(name, at)` — the same `retentionUntil` the logging path stamps.
+
+  The registry is now genuinely immutable. `IReadOnlyDictionary` does not make a map read-only: a
+  downcast to `IDictionary` brings the mutators back, and a caller who kept the dictionary it passed
+  in could edit it afterwards. Either route could redefine a compliance window for records already
+  written under the old one. It copies on construction and exposes a real `ReadOnlyDictionary`;
+  both routes have a test.
+
+- **`llms.txt`** — the compact API contract for code-generating agents, mirroring the Node
+  sibling's. Every fact in it was checked against the source or its test, including the two that
+  are easy to get wrong from memory: a configured matrix with no `default` drops all context on an
+  unlisted level, and the dictionary handed to `ITransport.Log` is reused across entries. Ships
+  inside the `sl4n` package, so an agent resolving it from NuGet gets the contract without cloning.
+
 ### Changed — internal
 
 - **The published projects build with zero warnings, and stay that way.** The 68 outstanding
