@@ -27,6 +27,7 @@ public class WorkerBuildBenchmark
     private Sl4nTransportWorker _noRules    = null!;   // masking off
     private Sl4nTransportWorker _withMatrix = null!;
     private Sl4nTransportWorker _dual       = null!;   // masking on + one exempt sink
+    private Sl4nTransportWorker _retaining  = null!;   // masking on + a registry that resolves
 
     private RawLogEvent _bare;
     private RawLogEvent _state;
@@ -51,6 +52,10 @@ public class WorkerBuildBenchmark
         _plain   = Worker();
         _noRules = Worker(masking: false);
         _dual    = Worker(exempt: true);
+        _retaining = Worker(retention: RetentionRegistry.Create(new Dictionary<string, RetentionPolicy>
+        {
+            ["SOX_AUDIT_TRAIL"] = new() { Years = 7, Class = "SOX" },
+        }));
         _withMatrix = Worker(matrix: LoggingMatrix.Create(new Dictionary<string, string[]>
         {
             ["default"]     = ["correlationId"],
@@ -119,4 +124,9 @@ public class WorkerBuildBenchmark
 
     [Benchmark(Description = "3 fields + retention scope (unresolved policy)")]
     public object Retention() => _plain.BuildOnly(in _retained);
+
+    // Resolved policy ⇒ the window is materialised: DateOnly arithmetic + an ISO string.
+    // Against the unresolved row, the delta is what retentionUntil costs.
+    [Benchmark(Description = "3 fields + retention RESOLVED (stamps retentionUntil)")]
+    public object RetentionResolved() => _retaining.BuildOnly(in _retained);
 }

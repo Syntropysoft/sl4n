@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Threading.Channels;
 using FluentAssertions;
 using Microsoft.Extensions.Logging;
@@ -148,5 +149,140 @@ public sealed class RetentionTests
         entry["retentionClass"].Should().Be("SOX");
         entry["retentionDays"].Should().Be(2555);
         entry.Should().NotContainKey(Sl4nRetention.Field);
+    }
+
+    // ── retentionUntil: the window materialised at write time ────────────────────
+
+    private static RetentionRegistry YearsRegistry() => RetentionRegistry.Create(
+        new Dictionary<string, RetentionPolicy>
+        {
+            ["SOX"]     = new RetentionPolicy { Years = 7,  Class = "SOX" },
+            ["GDPR"]    = new RetentionPolicy { Months = 6, Class = "GDPR" },
+            ["SHORT"]   = new RetentionPolicy { Days = 30,  Class = "ops" },
+            ["NO_UNIT"] = new RetentionPolicy { Class = "unclassified" },
+        });
+
+    private static RawLogEvent At(DateTimeOffset when, string policy) =>
+        new(LogLevel.Information, "audit", "payment approved", null, null,
+            Scope((Sl4nRetention.Field, (object?)policy)), when);
+
+    [Fact]
+    public async Task Worker_StampsRetentionUntil_FromTheEventTimestamp()
+    {
+        Dictionary<string, object?> entry = await Run(
+            At(new DateTimeOffset(2026, 8, 23, 14, 30, 0, TimeSpan.Zero), "SOX"), YearsRegistry());
+
+        entry["retentionUntil"].Should().Be("2033-08-23");
+        entry["retentionClass"].Should().Be("SOX");
+    }
+
+    [Fact]
+    public async Task Worker_StampsRetentionUntil_RollingForwardOnAShortMonth()
+    {
+        // 31-Aug + 6 months: .NET would clamp to 28-Feb. Short ends the window early, so it rolls.
+        Dictionary<string, object?> entry = await Run(
+            At(new DateTimeOffset(2026, 8, 31, 0, 0, 0, TimeSpan.Zero), "GDPR"), YearsRegistry());
+
+        entry["retentionUntil"].Should().Be("2027-03-03");
+    }
+
+    [Fact]
+    public async Task Worker_AnchorsTheWindowToTheLogInstant_NotToNow()
+    {
+        // The worker can be far behind under backlog. A window anchored to processing time would
+        // drift with the queue depth; this one is reproducible from the entry itself.
+        Dictionary<string, object?> entry = await Run(
+            At(new DateTimeOffset(2020, 1, 15, 0, 0, 0, TimeSpan.Zero), "SHORT"), YearsRegistry());
+
+        entry["retentionUntil"].Should().Be("2020-02-14");
+    }
+
+    [Fact]
+    public async Task Worker_UsesUtc_ForTheAnchorDate()
+    {
+        // 23:30 in UTC+3 is already the next day in UTC — the window must not shift with the
+        // producer's offset.
+        Dictionary<string, object?> entry = await Run(
+            At(new DateTimeOffset(2026, 8, 23, 23, 30, 0, TimeSpan.FromHours(3)), "SHORT"),
+            YearsRegistry());
+
+        entry["retentionUntil"].Should().Be("2026-09-22"); // anchored on 2026-08-23 UTC
+    }
+
+    [Fact]
+    public async Task Worker_NoUnitDeclared_EmitsNoUntil()
+    {
+        Dictionary<string, object?> entry = await Run(
+            At(new DateTimeOffset(2026, 8, 23, 0, 0, 0, TimeSpan.Zero), "NO_UNIT"), YearsRegistry());
+
+        entry["retention"].Should().Be("NO_UNIT");
+        entry["retentionClass"].Should().Be("unclassified");
+        entry.Should().NotContainKey("retentionUntil"); // no window ⇒ no date invented
+    }
+
+    [Fact]
+    public async Task Worker_NoTimestamp_EmitsNoUntil()
+    {
+        // No anchor, no date. The alternative would be reaching for a clock and stamping a window
+        // the entry cannot justify.
+        Dictionary<string, object?> entry = await Run(
+            new RawLogEvent(LogLevel.Information, "audit", "no timestamp", null, null,
+                Scope((Sl4nRetention.Field, (object?)"SOX"))),
+            YearsRegistry());
+
+        entry["retentionClass"].Should().Be("SOX");
+        entry.Should().NotContainKey("retentionUntil");
+    }
+
+    [Theory]
+    [InlineData("en-US")]
+    [InlineData("es-AR")]
+    [InlineData("de-DE")]
+    public async Task Worker_RetentionUntil_IsIso_RegardlessOfCulture(string culture)
+    {
+        CultureInfo previous = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = new CultureInfo(culture);
+            Dictionary<string, object?> entry = await Run(
+                At(new DateTimeOffset(2026, 8, 23, 0, 0, 0, TimeSpan.Zero), "SOX"), YearsRegistry());
+
+            entry["retentionUntil"].Should().Be("2033-08-23");
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = previous;
+        }
+    }
+
+    // ── An ambiguous window stops the host, it does not ship ─────────────────────
+
+    [Fact]
+    public void Registry_PolicyWithTwoUnits_ThrowsAtStartup()
+    {
+        Action build = () => RetentionRegistry.Create(new Dictionary<string, RetentionPolicy>
+        {
+            ["CONFUSED"] = new RetentionPolicy { Days = 30, Years = 7, Class = "SOX" },
+        });
+
+        build.Should().Throw<Sl4nConfigurationException>()
+             .WithMessage("*CONFUSED*Days=30*Years=7*");
+    }
+
+    [Fact]
+    public void Registry_PolicyWithOneUnit_IsAccepted()
+    {
+        foreach (RetentionPolicy p in new[]
+        {
+            new RetentionPolicy { Days = 30 },
+            new RetentionPolicy { Months = 6 },
+            new RetentionPolicy { Years = 7 },
+            new RetentionPolicy { Class = "none" },
+        })
+        {
+            Action build = () => RetentionRegistry.Create(
+                new Dictionary<string, RetentionPolicy> { ["P"] = p });
+            build.Should().NotThrow();
+        }
     }
 }

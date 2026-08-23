@@ -16,12 +16,36 @@ public sealed class RetentionRegistry
 
     public RetentionRegistry(IReadOnlyDictionary<string, RetentionPolicy> policies) => _policies = policies;
 
-    /// <summary>Builds a registry (case-insensitive names). Null/empty yields <see cref="Empty"/>.</summary>
+    /// <summary>
+    /// Builds a registry (case-insensitive names). Null/empty yields <see cref="Empty"/>.
+    /// Throws <see cref="Sl4nConfigurationException"/> if a policy declares more than one unit —
+    /// see <see cref="Validate"/>.
+    /// </summary>
     public static RetentionRegistry Create(IReadOnlyDictionary<string, RetentionPolicy>? policies)
     {
         if (policies is null || policies.Count == 0) return Empty;
+        Validate(policies);
         return new RetentionRegistry(
             new Dictionary<string, RetentionPolicy>(policies, StringComparer.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Rejects a policy that declares Days AND Months AND/OR Years. This runs while the services
+    /// are built — at startup, not on the logging path — because an ambiguous compliance window has
+    /// no safe default: picking one silently would mean records swept on a date nobody chose.
+    /// Failing to start is loud, immediate, and fixable; the alternative is discovered at audit time.
+    /// </summary>
+    private static void Validate(IReadOnlyDictionary<string, RetentionPolicy> policies)
+    {
+        foreach (KeyValuePair<string, RetentionPolicy> kv in policies)
+        {
+            if (!RetentionWindow.HasAmbiguousUnit(kv.Value)) continue;
+
+            throw new Sl4nConfigurationException(
+                $"Retention policy '{kv.Key}' declares more than one unit " +
+                $"(Days={kv.Value.Days}, Months={kv.Value.Months}, Years={kv.Value.Years}). " +
+                "Declare exactly one: Days, Months or Years.");
+        }
     }
 
     /// <summary>Resolves <paramref name="name"/> to its policy, if declared.</summary>

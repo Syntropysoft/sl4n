@@ -37,6 +37,37 @@ All notable changes to **sl4n** are documented here. This project adheres to
   The exempt sink costs 65 ns and **zero extra allocation** on top. Numbers come from the new
   `WorkerBuildBenchmark`; the pre-existing benchmarks could not see any of this (see below).
 
+- **`retentionUntil` — the compliance window materialised at write time (1.1.0).** An entry tagged
+  with a retention policy now also carries the date its window ends, so a purge is an indexable
+  range scan (`WHERE retention_until < CURRENT_DATE`) instead of a computed expression, and records
+  filed under an older revision of a policy keep the window that was in force when they were
+  written. `retentionDays` stays; nothing that reads it breaks.
+
+  `RetentionPolicy` gained **`Months`** and **`Years`** alongside `Days`. Declare exactly one:
+  declaring two throws the new `Sl4nConfigurationException` **at startup**, never from the logging
+  path. An ambiguous compliance window has no safe default, and a host that refuses to boot is
+  better than records swept on a date nobody chose. This is the library's first `throw` anywhere,
+  and it is deliberately confined to service construction.
+
+  **The arithmetic rounds long, on purpose.** .NET's `AddMonths`/`AddYears` clamp to the last day of
+  a short target month — 31-Jan + 1 month gives 28-Feb — which ends a window up to three days early,
+  the exact failure retention exists to prevent. sl4n rolls forward (31-Jan + 1 month → 3-Mar),
+  matching the JS sibling. Pinned by test across every short month and both leap-day cases.
+
+  Prefer the calendar unit: `days` is exact but drifts. `2555` — the value this README used to
+  show for SOX — is 7 × 365 and misses two leap days, ending two days before seven actual years.
+
+  Anchored to the **event's own timestamp**, not to the clock the worker reads: the worker can be
+  seconds behind under backlog, and a window that moved with queue depth would not be reproducible
+  from the entry. No timestamp and no declared unit both mean the field is omitted, never guessed.
+
+  Emitted as an ISO `yyyy-MM-dd` string rather than a `DateOnly`, because the JSON transport would
+  have formatted a bare `DateOnly` with the server's culture — `8/23/2033` in `en-US`, `23/8/2033`
+  in `es-AR`. Pinned by test under three cultures.
+
+  Cost, measured with `WorkerBuildBenchmark`: +93 ns and +72 B on entries whose policy resolves;
+  every other path is unchanged within noise.
+
 ### Added — internal
 
 - **`WorkerBuildBenchmark` — the pipeline is finally measurable.** Every existing benchmark timed

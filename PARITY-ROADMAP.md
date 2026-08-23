@@ -96,7 +96,16 @@ a `MaxBufferedEntries` cap on `DurableFileTransport` for very long outages (curr
 Verified against the JS README "What's in the box" inventory — these are real gaps in sl4n's code,
 listed here so they live in the roadmap like everything else:
 
-- [ ] **Retention shape diverged from the reference — decision pending (2026-08-22).** Not an
+- [x] **Retention shape diverged from the reference — RESOLVED 2026-08-23, Option 2 (Gabriel's
+      call).** `retentionUntil` is now materialised alongside `retentionDays`, and `RetentionPolicy`
+      gained `Months`/`Years` with exactly-one-unit enforced at startup. The rounding is overridden
+      to roll forward, pinned by test. `DateOnly` is used for the arithmetic but the emitted form is
+      an ISO string — a bare `DateOnly` would have been formatted by `ConsoleTransport` with the
+      server's culture. `TimeProvider` turned out to be unnecessary: the event already carries the
+      timestamp the window must anchor to, which is more correct than any clock the worker could
+      read. Original analysis kept below for the reasoning.
+
+      **Original analysis.** Not an
       incomplete port: a different design, and it is not recorded under *.NET salvedades*, so it is
       either a divergence to close or a salvedad to declare. Three axes:
 

@@ -390,4 +390,39 @@ public sealed class MaskingExemptionTests
         console.Entries.Single()["Email"].Should().Be("j**n@example.com");
         ledger.Entries.Single()["Email"].Should().Be("john@example.com");
     }
+
+    [Fact]
+    public async Task ExemptSink_GetsRetentionUntil_LikeEveryOtherSink()
+    {
+        Channel<RawLogEvent> channel = UnboundedChannel();
+        CapturingTransport console = new(), ledger = new();
+        RetentionRegistry registry = RetentionRegistry.Create(new Dictionary<string, RetentionPolicy>
+        {
+            ["SOX_AUDIT_TRAIL"] = new() { Years = 7, Class = "SOX" }
+        });
+        Sl4nTransportWorker worker = new(
+            channel.Reader, [console], DefaultMasking(), matrix: null, stats: null, onLogFailure: null,
+            retention: registry, unmasked: [ledger]);
+
+        List<KeyValuePair<string, object?>> scope =
+        [
+            KeyValuePair.Create<string, object?>(Sl4nRetention.Field, "SOX_AUDIT_TRAIL")
+        ];
+        channel.Writer.TryWrite(new RawLogEvent(
+            LogLevel.Information, "audit", "payment approved for {Email}",
+            [KeyValuePair.Create<string, object?>("Email", "john@example.com")],
+            null, scope, new DateTimeOffset(2026, 8, 23, 0, 0, 0, TimeSpan.Zero)));
+
+        await DrainAsync(worker, channel);
+
+        // The ledger is exempt from MASKING, not from the compliance metadata — it is the sink
+        // that most needs to know when the window ends.
+        Dictionary<string, object?> audit = ledger.Entries.Single();
+        audit["retentionUntil"].Should().Be("2033-08-23");
+        audit["Email"].Should().Be("john@example.com");
+
+        Dictionary<string, object?> masked = console.Entries.Single();
+        masked["retentionUntil"].Should().Be(audit["retentionUntil"]);
+        masked["Email"].Should().Be("j**n@example.com");
+    }
 }

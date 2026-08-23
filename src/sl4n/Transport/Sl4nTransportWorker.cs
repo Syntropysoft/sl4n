@@ -175,6 +175,18 @@ public sealed class Sl4nTransportWorker : IHostedService, IAsyncDisposable
             {
                 Put("retentionClass", policy.Class);
                 Put("retentionDays",  policy.Days);
+
+                // Materialise the end of the window at WRITE time, so a sweep is an indexable range
+                // scan (retention_until < now()) that stays correct across revisions of the policy.
+                // Anchored to the event's own timestamp, not to now: the worker can be seconds
+                // behind under backlog, and the window belongs to the moment the log happened.
+                // No timestamp means no anchor — the field is omitted rather than guessed.
+                if (e.Timestamp != default)
+                {
+                    DateOnly? until = RetentionWindow.Until(
+                        DateOnly.FromDateTime(e.Timestamp.UtcDateTime), policy);
+                    if (until is not null) Put("retentionUntil", RetentionWindow.ToIso(until.Value));
+                }
             }
         }
 

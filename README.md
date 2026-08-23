@@ -314,8 +314,9 @@ Declare named retention policies (compliance metadata), then tag the logs that m
 
 ```json
 "retentionPolicies": {
-  "SOX_AUDIT_TRAIL": { "days": 2555, "class": "SOX" },
-  "GDPR_STANDARD":   { "days": 365,  "class": "GDPR" }
+  "SOX_AUDIT_TRAIL": { "years": 7,   "class": "SOX" },
+  "GDPR_STANDARD":   { "months": 12, "class": "GDPR" },
+  "OPS_SHORT":       { "days": 30,   "class": "ops" }
 }
 ```
 
@@ -323,11 +324,48 @@ Declare named retention policies (compliance metadata), then tag the logs that m
 using (logger.BeginRetentionScope("SOX_AUDIT_TRAIL"))
 {
     logger.LogInformation("Payment approved {Amount}", amount);
-    // → { …, "retention": "SOX_AUDIT_TRAIL", "retentionClass": "SOX", "retentionDays": 2555 }
+    // → { …, "retention": "SOX_AUDIT_TRAIL", "retentionClass": "SOX",
+    //        "retentionDays": 0, "retentionUntil": "2033-08-23" }
 }
 ```
 
-The tag rides a MEL scope, so every log in the call chain inherits it. Retention metadata **bypasses the logging matrix** — it's a structural compliance stamp, not user context.
+The tag rides a MEL scope, so every log in the call chain inherits it. Retention metadata
+**bypasses the logging matrix** — it's a structural compliance stamp, not user context.
+
+### `retentionUntil` — the window, materialised
+
+`retentionUntil` is the date the window ends, computed **when the entry is written** and anchored to
+that entry's own timestamp. That makes a purge an indexable range scan:
+
+```sql
+DELETE FROM audit_log WHERE retention_until < CURRENT_DATE;
+```
+
+The sweeper needs to know nothing about policies, and records written under an older revision of a
+policy keep the window that was in force when they were written — revise the policy from 7 years to
+5 and yesterday's records are unaffected, because their date was already decided.
+
+### Pick the unit the window is actually expressed in
+
+Declare **exactly one** of `days`, `months`, `years`. Declaring two throws
+`Sl4nConfigurationException` at startup: an ambiguous compliance window has no safe default, and
+failing to boot is better than sweeping records on a date nobody chose.
+
+Prefer the calendar unit when the window is a calendar period. `days` is exact but drifts:
+
+| declared | from 2026-08-23 | |
+|---|---|---|
+| `"days": 2555` | 2033-08-21 | 7 × 365 — misses two leap days |
+| `"years": 7` | 2033-08-23 | seven actual years |
+
+And the arithmetic rounds **long, on purpose**. .NET's `AddMonths`/`AddYears` clamp to the last day
+of a short target month — 31-Jan + 1 month gives 28-Feb — which ends the window up to three days
+early. sl4n rolls forward instead (31-Jan + 1 month → 3-Mar). Keeping a record slightly too long is
+a housekeeping matter; deleting it early is the finding an auditor writes up.
+
+A policy that declares no unit still stamps `retention` and `retentionClass`, and simply omits
+`retentionUntil` — as does an entry with no timestamp to anchor to. The field is left out rather
+than guessed.
 
 ---
 
