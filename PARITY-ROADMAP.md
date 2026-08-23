@@ -202,6 +202,32 @@ listed here so they live in the roadmap like everything else:
       and needs no singleton. Same guarantee — one registry, one answer, whichever way it is asked —
       with a loud failure on an unregistered name rather than a silent null.
 
+- [ ] **Channel drops are not counted — the audit trail can have a hole with no signal.** Found by
+      `/sl-analyze` on 2026-08-22 while mapping the exemption. `Sl4nChannel.Create` is a bounded
+      channel (4096) with `BoundedChannelFullMode.DropOldest`, and `Sl4nLogger.Log` ignores the
+      result of `TryWrite`. When the worker falls behind, the channel silently discards the oldest
+      entries — and `IncrDroppedEntries` is invoked from exactly ONE place, the
+      `ObjectDisposedException` catch in the worker (verified by grep: it is the only call site in
+      `src/`). `Sl4nStatsSnapshot.DroppedEntries` even documents itself as *"entries skipped because
+      their lazy state was already disposed"*, so it does not pretend to cover this.
+
+      Fail-path: a logging burst enqueues more than 4096 before the worker drains, entries are lost,
+      and `Snapshot()` reports `DroppedEntries: 0`. If one of them carried a SOX retention tag, the
+      audit trail has a hole and nothing indicates it. Dropping under pressure is deliberate and
+      correct — logging must not block the app. Dropping **without counting**, while publishing a
+      drop counter, is the defect.
+
+      No test covers it either: all six worker harnesses build the channel with
+      `Channel.CreateUnbounded`, so the production bounded path is never exercised.
+
+- [ ] **Correct this document: the "resolve without a logger" gap is overstated.** The entry below
+      claims *"nothing public that resolves against it outside the logging path"*. Not so —
+      `RetentionRegistry` is `public sealed` (`RetentionRegistry.cs:9`), `TryResolve` is `public`
+      (`:28`), and it is registered as a singleton (`Sl4nServiceCollectionExtensions.cs:55`). A
+      consumer can inject it and resolve today. What is actually missing is enumerating the registry
+      (`getRetentionPolicies()`) and the materialised date (`getRetentionUntil`, which waits on the
+      retention-shape decision). Left as written, the item sends someone to build what exists.
+
 - [ ] **PackageTags honesty (priority)** — `sl4n.csproj` lists `opentelemetry` in `PackageTags`
       but no OTel integration exists anywhere in the code. Honest-positioning rule: remove the tag,
       or build the feature (an `ITransport` emitting to an OTLP logger, per the JS README's
